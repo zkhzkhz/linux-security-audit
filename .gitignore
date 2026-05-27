@@ -1,10 +1,6 @@
 # Reports (host-specific scan results)
 reports/
 
-# Runtime binaries
-bin/gitleaks-*
-bin/linpeas*
-
 # Temp files
 *.log
 *.tmp
