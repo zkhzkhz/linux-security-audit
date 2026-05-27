@@ -78,8 +78,10 @@ if [ "$NO_CONTAINERS" = "1" ]; then
   launch privesc-escape-check \
     "$LSA_ROOT/skills/privesc-escape-check/scripts/host_privesc.sh"
 else
-  launch privesc-escape-check \
-    "$LSA_ROOT/skills/privesc-escape-check/scripts/enter_container.sh" --mode both
+  launch privesc-escape-check bash -c "
+    '$LSA_ROOT/skills/privesc-escape-check/scripts/enter_container.sh' --mode both
+    '$LSA_ROOT/skills/privesc-escape-check/scripts/run_cdk.sh'
+  "
 fi
 
 # Lateral movement is also run in parallel — its discover step is rate-limited.
@@ -146,9 +148,31 @@ fi
 # --- normalize result.json for modules that don't produce one directly ---
 for mod_dir in "$LSA_RUN_DIR"/*/; do
   [ -f "$mod_dir/result.json" ] && continue
-  # privesc-escape-check: host.json is the result
-  if [ -f "$mod_dir/host.json" ]; then
-    cp "$mod_dir/host.json" "$mod_dir/result.json"
+  # privesc-escape-check: merge host.json + cdk/result.json
+  if [ -f "$mod_dir/host.json" ] || [ -f "$mod_dir/cdk/result.json" ]; then
+    python3 -c '
+import json, sys, os
+d = sys.argv[1]
+findings = []
+counts = {}
+for name in ("host.json", "cdk/result.json"):
+    p = os.path.join(d, name)
+    if not os.path.isfile(p): continue
+    data = json.loads(open(p).read())
+    findings.extend(data.get("findings", []))
+    for k, v in data.get("counts", {}).items():
+        counts[k] = counts.get(k, 0) + v
+sev_rank = {"critical":4,"high":3,"medium":2,"low":1,"info":0}
+findings.sort(key=lambda f: sev_rank.get(f.get("severity","info"),0), reverse=True)
+sev_counts = {}
+for f in findings:
+    s = f.get("severity","info")
+    sev_counts[s] = sev_counts.get(s, 0) + 1
+status = "warn" if sev_counts.get("critical",0)+sev_counts.get("high",0)>0 else "ok"
+summary = ", ".join(f"{k}:{v}" for k,v in sev_counts.items()) if sev_counts else "no findings"
+result = {"module":"privesc-escape-check","status":status,"summary":summary,"counts":{**counts,**sev_counts},"findings":findings}
+open(os.path.join(d,"result.json"),"w").write(json.dumps(result,indent=2,ensure_ascii=False))
+' "$mod_dir" 2>/dev/null || cp "$mod_dir/host.json" "$mod_dir/result.json"
   # lateral-movement-scan: merge discover.json + creds.json
   elif [ -f "$mod_dir/discover.json" ] || [ -f "$mod_dir/creds.json" ]; then
     python3 -c '

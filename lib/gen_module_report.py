@@ -97,6 +97,8 @@ def gen_privesc_report(mod_dir):
     """Generate report for privesc-escape-check module."""
     result = load_json(mod_dir / "result.json")
     if not result:
+        result = load_json(mod_dir / "cdk" / "result.json")
+    if not result:
         return None
 
     lines = []
@@ -132,6 +134,17 @@ def gen_privesc_report(mod_dir):
         lines.append("")
         lines.extend(render_findings_table(items, max_rows=20))
 
+    # CDK findings (container escape / misconfig)
+    cdk_result = load_json(mod_dir / "cdk" / "result.json")
+    if cdk_result and cdk_result.get("findings"):
+        cdk_findings = cdk_result["findings"]
+        lines.append("## CDK Container Escape Analysis")
+        lines.append("")
+        lines.append(f"- Containers scanned: {len(set(f.get('where','').split(':')[0] for f in cdk_findings))}")
+        lines.append(f"- Summary: {cdk_result.get('summary', 'N/A')}")
+        lines.append("")
+        lines.extend(render_findings_table(cdk_findings, max_rows=30))
+
     lines.append("## Remediation Priority")
     lines.append("")
     high_crit = [f for f in findings if f.get("severity") in ("critical", "high")]
@@ -148,6 +161,9 @@ def gen_privesc_report(mod_dir):
     lines.append("- Enable seccomp and AppArmor profiles")
     lines.append("- Run containers as non-root user")
     lines.append("- Use read-only root filesystem where possible")
+    lines.append("- Remove docker.sock mounts from containers")
+    lines.append("- Block cloud metadata API (169.254.169.254) from containers")
+    lines.append("- Drop NET_RAW and other unnecessary capabilities")
     lines.append("")
     return lines
 
@@ -336,7 +352,7 @@ def main():
 
     target = Path(sys.argv[1]).resolve()
 
-    if (target / "result.json").exists():
+    if (target / "result.json").exists() or target.name in MODULE_GENERATORS:
         # Single module directory
         report = generate_report(target)
         if report:
