@@ -1,0 +1,47 @@
+#!/bin/bash
+# Find shim that prunes docker/overlay/containerd paths to prevent
+# linpeas from hanging when traversing thousands of overlay2 layers.
+real_find=/usr/bin/find
+
+paths=()
+expr=()
+found_expr=false
+
+for arg in "$@"; do
+  if ! $found_expr; then
+    case "$arg" in
+      -[!-]*|\(|!|,) found_expr=true; expr+=("$arg") ;;
+      *) paths+=("$arg") ;;
+    esac
+  else
+    expr+=("$arg")
+  fi
+done
+
+[ ${#paths[@]} -eq 0 ] && paths=(.)
+
+PRUNE=(\( \
+  -path '*/overlay2' \
+  -o -path '*/containerd/io.containerd*' \
+  -o -path '*/var/snap/docker/*' \
+  -o -path '*/run/snap.docker/*' \
+  -o -path '*/.npm/_cacache' \
+  \) -prune)
+
+if [ ${#expr[@]} -eq 0 ]; then
+  exec "$real_find" "${paths[@]}" "${PRUNE[@]}" -o -print
+fi
+
+has_action=false
+for arg in "${expr[@]}"; do
+  case "$arg" in
+    -print|-print0|-exec|-execdir|-delete|-ok|-okdir|-fprint*|-fprintf*)
+      has_action=true; break ;;
+  esac
+done
+
+if $has_action; then
+  exec "$real_find" "${paths[@]}" "${PRUNE[@]}" -o \( "${expr[@]}" \)
+else
+  exec "$real_find" "${paths[@]}" "${PRUNE[@]}" -o \( "${expr[@]}" \) -print
+fi

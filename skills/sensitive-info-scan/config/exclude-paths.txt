@@ -1,0 +1,89 @@
+# Path/file regex excluded from gitleaks scanning.
+# These are merged into [allowlist] paths at runtime by scan.sh.
+# Reasons: virtual fs, kernel/proc, container overlay/cache, package caches, vendored deps.
+
+# Virtual / kernel
+^/proc(/|$)
+^/sys(/|$)
+^/dev(/|$)
+^/run(/|$)
+
+# Container runtimes & images on the host
+/var/lib/docker/overlay2/
+/var/lib/docker/containers/
+/var/lib/containerd/
+/var/lib/buildkit/
+/var/lib/kubelet/pods/
+/var/lib/snapd/
+/snap/
+
+# OS / package caches
+/var/cache/
+/var/lib/apt/lists/
+/var/lib/dpkg/info/
+/var/lib/yum/
+/var/lib/dnf/
+/var/log/journal/
+
+# Dev artefacts (commonly huge, mostly noise)
+(^|/)node_modules(/|$)
+(^|/)vendor(/|$)
+(^|/)\.git/objects(/|$)
+(^|/)\.gradle(/|$)
+(^|/)\.m2/repository(/|$)
+(^|/)__pycache__(/|$)
+(^|/)dist(/|$)
+(^|/)build(/|$)
+(^|/)target(/|$)
+(^|/)\.venv(/|$)
+(^|/)venv(/|$)
+(^|/)site-packages(/|$)
+
+# Package manager caches (library source code, not user secrets)
+(^|/)\.npm/_cacache(/|$)
+(^|/)\.bun/install/cache(/|$)
+(^|/)\.yarn/cache(/|$)
+(^|/)\.pnpm-store(/|$)
+(^|/)go/pkg/mod(/|$)
+(^|/)\.cargo/registry(/|$)
+
+# Own report artifacts (avoid scanning previous scan results)
+linux-security-audit/reports/
+
+# Browsers / desktop caches
+\.cache/
+\.mozilla/
+\.config/google-chrome/
+\.config/chromium/
+
+# Common false-positive heavy formats
+\.min\.js$
+\.map$
+\.lock$
+\.po$
+\.pot$
+\.mo$
+\.pdf$
+\.svg$
+\.ttf$
+\.woff2?$
+\.eot$
+\.otf$
+\.ico$
+\.png$
+\.jpe?g$
+\.gif$
+\.webp$
+\.mp[34]$
+\.zip$
+\.tar$
+\.gz$
+\.xz$
+\.bz2$
+\.7z$
+# Note: archives are still picked up via --scan-archives flag, the regex above
+# only excludes them from regular file scanning to avoid double-walks.
+
+# Host-specific large logs
+/var/log/.*\.gz$
+/var/log/.*\.[0-9]+$

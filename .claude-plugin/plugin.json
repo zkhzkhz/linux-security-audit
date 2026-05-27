@@ -1,0 +1,8 @@
+{
+  "name": "linux-security-audit",
+  "version": "0.1.0",
+  "description": "Linux host & container security audit toolkit: secret leakage, local privesc, container escape, lateral movement, egress / inter-container isolation.",
+  "author": "local",
+  "homepage": "",
+  "license": "MIT"
+}

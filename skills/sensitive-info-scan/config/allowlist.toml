@@ -1,0 +1,24 @@
+# Allowlist of known false positives. Loaded into the global config by scan.sh.
+# Add real paths or regex you've reviewed and confirmed safe.
+
+[allowlist]
+description = "site-specific allowlist"
+paths = [
+    # '''/opt/myapp/tests/fixtures/.*''',
+]
+regexes = [
+    # AWS docs example
+    '''AKIAIOSFODNN7EXAMPLE''',
+    '''wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY''',
+    # Common Terraform / docs placeholder
+    '''(?i)dummy[-_]?(secret|token|key)''',
+    # Repeated padding
+    '''^[Xx]{8,}$''',
+    '''^[0]{8,}$''',
+]
+stopwords = [
+    "EXAMPLE",
+    "PLACEHOLDER",
+    "CHANGEME",
+    "REDACTED",
+]

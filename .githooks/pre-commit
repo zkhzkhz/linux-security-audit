@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Pre-commit hook: run gitleaks to prevent secrets from being committed.
+# Install: git config core.hooksPath .githooks
+
+# Find gitleaks binary
+GITLEAKS=""
+if command -v gitleaks >/dev/null 2>&1; then
+  GITLEAKS=gitleaks
+elif [ -x "$(git rev-parse --show-toplevel)/bin/gitleaks" ]; then
+  GITLEAKS="$(git rev-parse --show-toplevel)/bin/gitleaks"
+fi
+
+if [ -z "$GITLEAKS" ]; then
+  echo "[pre-commit] gitleaks not found, skipping secret scan"
+  exit 0
+fi
+
+echo "[pre-commit] running gitleaks on staged changes..."
+$GITLEAKS protect --staged --no-banner --exit-code 1
+
+if [ $? -ne 0 ]; then
+  echo ""
+  echo "[pre-commit] BLOCKED: secrets detected in staged files."
+  echo "  Fix: remove the secret, then re-stage and commit."
+  echo "  Bypass (NOT recommended): git commit --no-verify"
+  exit 1
+fi
