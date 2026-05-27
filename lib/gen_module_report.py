@@ -181,6 +181,15 @@ def gen_privesc_report(mod_dir):
         lines.append("")
         lines.extend(render_findings_table(trivy_result["findings"], max_rows=30))
 
+    # kube-bench findings
+    kb_result = load_json(mod_dir / "kube-bench" / "result.json")
+    if kb_result and kb_result.get("findings"):
+        lines.append("## kube-bench CIS Kubernetes Benchmark")
+        lines.append("")
+        lines.append(f"- Summary: {kb_result.get('summary', 'N/A')}")
+        lines.append("")
+        lines.extend(render_findings_table(kb_result["findings"], max_rows=30))
+
     lines.append("## Remediation Priority")
     lines.append("")
     high_crit = [f for f in findings if f.get("severity") in ("critical", "high")]

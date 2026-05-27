@@ -85,6 +85,7 @@ else
     '$LSA_ROOT/skills/privesc-escape-check/scripts/run_amicontained.sh'
     '$LSA_ROOT/skills/privesc-escape-check/scripts/run_peirates.sh'
     '$LSA_ROOT/skills/privesc-escape-check/scripts/run_trivy.sh'
+    '$LSA_ROOT/skills/privesc-escape-check/scripts/run_kube_bench.sh'
   "
 fi
 
@@ -159,7 +160,7 @@ import json, sys, os
 d = sys.argv[1]
 findings = []
 counts = {}
-for name in ("host.json", "cdk/result.json", "deepce/result.json", "amicontained/result.json", "peirates/result.json", "trivy/result.json"):
+for name in ("host.json", "cdk/result.json", "deepce/result.json", "amicontained/result.json", "peirates/result.json", "trivy/result.json", "kube-bench/result.json"):
     p = os.path.join(d, name)
     if not os.path.isfile(p): continue
     data = json.loads(open(p).read())
