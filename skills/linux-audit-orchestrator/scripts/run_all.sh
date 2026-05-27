@@ -81,6 +81,10 @@ else
   launch privesc-escape-check bash -c "
     '$LSA_ROOT/skills/privesc-escape-check/scripts/enter_container.sh' --mode both
     '$LSA_ROOT/skills/privesc-escape-check/scripts/run_cdk.sh'
+    '$LSA_ROOT/skills/privesc-escape-check/scripts/run_deepce.sh'
+    '$LSA_ROOT/skills/privesc-escape-check/scripts/run_amicontained.sh'
+    '$LSA_ROOT/skills/privesc-escape-check/scripts/run_peirates.sh'
+    '$LSA_ROOT/skills/privesc-escape-check/scripts/run_trivy.sh'
   "
 fi
 
@@ -148,14 +152,14 @@ fi
 # --- normalize result.json for modules that don't produce one directly ---
 for mod_dir in "$LSA_RUN_DIR"/*/; do
   [ -f "$mod_dir/result.json" ] && continue
-  # privesc-escape-check: merge host.json + cdk/result.json
+  # privesc-escape-check: merge host.json + all sub-tool results
   if [ -f "$mod_dir/host.json" ] || [ -f "$mod_dir/cdk/result.json" ]; then
     python3 -c '
 import json, sys, os
 d = sys.argv[1]
 findings = []
 counts = {}
-for name in ("host.json", "cdk/result.json"):
+for name in ("host.json", "cdk/result.json", "deepce/result.json", "amicontained/result.json", "peirates/result.json", "trivy/result.json"):
     p = os.path.join(d, name)
     if not os.path.isfile(p): continue
     data = json.loads(open(p).read())

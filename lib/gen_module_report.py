@@ -145,6 +145,42 @@ def gen_privesc_report(mod_dir):
         lines.append("")
         lines.extend(render_findings_table(cdk_findings, max_rows=30))
 
+    # Deepce findings
+    deepce_result = load_json(mod_dir / "deepce" / "result.json")
+    if deepce_result and deepce_result.get("findings"):
+        lines.append("## Deepce Container Escape Enumeration")
+        lines.append("")
+        lines.append(f"- Summary: {deepce_result.get('summary', 'N/A')}")
+        lines.append("")
+        lines.extend(render_findings_table(deepce_result["findings"], max_rows=20))
+
+    # amicontained findings
+    ami_result = load_json(mod_dir / "amicontained" / "result.json")
+    if ami_result and ami_result.get("findings"):
+        lines.append("## amicontained Runtime Constraints")
+        lines.append("")
+        lines.append(f"- Summary: {ami_result.get('summary', 'N/A')}")
+        lines.append("")
+        lines.extend(render_findings_table(ami_result["findings"], max_rows=20))
+
+    # Peirates findings
+    peir_result = load_json(mod_dir / "peirates" / "result.json")
+    if peir_result and peir_result.get("findings"):
+        lines.append("## Peirates Kubernetes Penetration")
+        lines.append("")
+        lines.append(f"- Summary: {peir_result.get('summary', 'N/A')}")
+        lines.append("")
+        lines.extend(render_findings_table(peir_result["findings"], max_rows=20))
+
+    # Trivy findings
+    trivy_result = load_json(mod_dir / "trivy" / "result.json")
+    if trivy_result and trivy_result.get("findings"):
+        lines.append("## Trivy Image Vulnerability Scan")
+        lines.append("")
+        lines.append(f"- Summary: {trivy_result.get('summary', 'N/A')}")
+        lines.append("")
+        lines.extend(render_findings_table(trivy_result["findings"], max_rows=30))
+
     lines.append("## Remediation Priority")
     lines.append("")
     high_crit = [f for f in findings if f.get("severity") in ("critical", "high")]

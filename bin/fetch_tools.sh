@@ -73,7 +73,33 @@ case "$WANT" in
     ln -sf "gitleaks-${OS}-${ARCH}" "$DEST/gitleaks"
     log_ok "symlink: $DEST/gitleaks -> gitleaks-${OS}-${ARCH}"
     ;;
+  trivy)
+    TRIVY_VER="${VERSION:-v0.70.0}"
+    TRIVY_VER="${TRIVY_VER#v}"
+    OS="$(detect_os)"
+    if [ "$ALL_ARCH" = "1" ]; then
+      archs="amd64 arm64"
+    else
+      archs="$(detect_arch)"
+    fi
+    for a in $archs; do
+      target="$DEST/trivy-linux-$a"
+      [ -x "$target" ] && { log_info "already exists: $target"; continue; }
+      case "$a" in
+        amd64) suffix="Linux-64bit";;
+        arm64) suffix="Linux-ARM64";;
+        *) continue;;
+      esac
+      url="https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VER}/trivy_${TRIVY_VER}_${suffix}.tar.gz"
+      log_info "downloading $url"
+      tmp="$(mktemp -d)"
+      curl -fsSL "$url" | tar xz -C "$tmp" trivy || { log_warn "download failed: $a"; rm -rf "$tmp"; continue; }
+      install -m 0755 "$tmp/trivy" "$target"
+      rm -rf "$tmp"
+      log_ok "$target"
+    done
+    ;;
   *)
-    die "unknown tool: $WANT (only 'gitleaks' supported)"
+    die "unknown tool: $WANT (supported: gitleaks, trivy)"
     ;;
 esac
