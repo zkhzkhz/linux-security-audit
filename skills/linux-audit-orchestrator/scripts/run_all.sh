@@ -69,6 +69,10 @@ launch() {
 launch sensitive-info-scan \
   "$LSA_ROOT/skills/sensitive-info-scan/scripts/scan.sh"
 
+# TruffleHog runs in parallel with gitleaks scan
+launch sensitive-info-scan-trufflehog \
+  "$LSA_ROOT/skills/sensitive-info-scan/scripts/run_trufflehog.sh"
+
 if [ "$NO_CONTAINERS" = "0" ]; then
   launch sensitive-info-scan-containers \
     "$LSA_ROOT/skills/sensitive-info-scan/scripts/scan_containers.sh"
@@ -105,6 +109,7 @@ if run_module lateral-movement-scan; then
     if [ "$NO_CONTAINERS" = "0" ]; then
       "$LSA_ROOT/skills/lateral-movement-scan/scripts/scan_containers_creds.sh"
     fi
+    "$LSA_ROOT/skills/lateral-movement-scan/scripts/run_ssh_audit.sh"
   ) >"$LSA_RUN_DIR/lateral-movement-scan.launch.log" 2>&1 &
   pids+=($!)
 fi
@@ -122,6 +127,9 @@ if run_module egress-control-audit; then
     "$LSA_ROOT/skills/egress-control-audit/scripts/verify_isolation.sh" \
       >>"$LSA_RUN_DIR/egress-control-audit.launch.log" 2>&1 || true
   fi
+  # Docker CIS Benchmark
+  "$LSA_ROOT/skills/egress-control-audit/scripts/run_docker_bench.sh" \
+    >>"$LSA_RUN_DIR/egress-control-audit.launch.log" 2>&1 || true
   # Merge isolation findings into result.json
   python3 -c '
 import json, os, sys
