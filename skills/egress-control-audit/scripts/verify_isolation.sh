@@ -10,7 +10,7 @@ SKILL_DIR="$(cd "$HERE/.." && pwd)"
 LSA_ROOT="${LSA_ROOT:-$(cd "$SKILL_DIR/../.." && pwd)}"
 . "$LSA_ROOT/lib/common.sh"
 
-TIMEOUT=3
+TIMEOUT=5
 OUT_OVERRIDE=""
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -49,7 +49,9 @@ done < <("$RT" ps -q 2>/dev/null)
 log_info "found ${#CONTAINER_IDS[@]} containers"
 
 # External endpoints to test egress (IP-based to avoid DNS dependency)
-EGRESS_TARGETS="1.1.1.1:80 8.8.8.8:53"
+# International: Cloudflare + Google DNS
+# Chinese domestic: 114DNS + AliDNS (verify region-specific egress control)
+EGRESS_TARGETS="1.1.1.1:80 8.8.8.8:53 114.114.114.114:53 223.5.5.5:53"
 # Key ports to test lateral connectivity (keep small for speed)
 LATERAL_PORTS="22 80 8080"
 
@@ -108,9 +110,9 @@ for src_cid in "${CONTAINER_IDS[@]}"; do
 
   probe_script="$(build_probe_script "$all_targets" "$TIMEOUT")"
 
-  # Pick shell
+  # Pick shell (prefer bash for /dev/tcp support)
   local_sh=""
-  for try in /bin/sh /bin/bash /bin/ash; do
+  for try in /bin/bash /bin/sh /bin/ash; do
     if "$RT" exec "$src_cid" "$try" -c 'echo ok' >/dev/null 2>&1; then
       local_sh="$try"; break
     fi
@@ -128,14 +130,25 @@ for src_cid in "${CONTAINER_IDS[@]}"; do
       done >> "$RESULTS" || true
 done
 
+# --- capture iptables for whitelist analysis ---
+IPTABLES_FILE="$OUT/isolation/iptables_egress.txt"; : > "$IPTABLES_FILE"
+if command -v iptables-save >/dev/null 2>&1; then
+  iptables-save > "$IPTABLES_FILE" 2>/dev/null || true
+elif command -v iptables >/dev/null 2>&1; then
+  iptables -L FORWARD -n -v >> "$IPTABLES_FILE" 2>/dev/null || true
+  iptables -L OUTPUT -n -v >> "$IPTABLES_FILE" 2>/dev/null || true
+  iptables -t nat -L -n -v >> "$IPTABLES_FILE" 2>/dev/null || true
+fi
+
 # --- analyze results on host ---
-python3 - "$RESULTS" "$OUT/isolation" "$LOG" <<'PY'
+python3 - "$RESULTS" "$OUT/isolation" "$LOG" "$IPTABLES_FILE" <<'PY'
 import json, sys, os
 from datetime import datetime, timezone
 
 results_file = sys.argv[1]
 out_dir = sys.argv[2]
 log_file = sys.argv[3]
+iptables_file = sys.argv[4]
 
 findings = []
 lateral_open = []
@@ -143,6 +156,7 @@ egress_open = []
 all_probes = []
 
 external_ips = {"1.1.1.1", "8.8.8.8", "223.5.5.5", "114.114.114.114"}
+cn_domestic_ips = {"114.114.114.114", "223.5.5.5"}
 
 try:
     lines = open(results_file, errors="replace").readlines()
@@ -166,11 +180,15 @@ for line in lines:
 
     if ip in external_ips:
         egress_open.append({"src": src, "target": ip_port})
+        if ip in cn_domestic_ips:
+            note = "container can reach Chinese domestic DNS — no egress whitelist"
+        else:
+            note = "container can reach external internet (reverse shell risk)"
         findings.append({
             "severity": "high",
             "title": "container-egress-open",
             "where": f"{src} -> {ip_port}",
-            "note": "container can reach external internet (reverse shell risk)",
+            "note": note,
         })
     else:
         lateral_open.append({"src": src, "target": ip_port})
@@ -208,6 +226,101 @@ if not summary_parts:
     summary_parts.append("all isolated")
 summary = "; ".join(summary_parts)
 
+# --- IP whitelist analysis from iptables ---
+import re
+whitelist_rules = []
+has_real_egress_restrict = False
+iptables_lines = []
+try:
+    iptables_lines = open(iptables_file, errors="replace").readlines()
+except Exception:
+    pass
+
+# Parse iptables-save: only look at *filter table
+in_filter_table = False
+forward_policy = "ACCEPT"
+output_policy = "ACCEPT"
+docker_user_rules = []
+forward_rules = []
+docker_standard_patterns = re.compile(
+    r'(-j DOCKER|-j DOCKER-USER|-j DOCKER-FORWARD|-j DOCKER-CT|'
+    r'-j DOCKER-BRIDGE|-j DOCKER-INTERNAL|-j RETURN|'
+    r'-[io] docker|'
+    r'-[io] br-[a-f0-9]+|'
+    r'--ctstate RELATED,ESTABLISHED)'
+)
+
+for line in iptables_lines:
+    line = line.strip()
+    if line == "*filter":
+        in_filter_table = True
+        continue
+    if line == "COMMIT" and in_filter_table:
+        in_filter_table = False
+        continue
+    if not in_filter_table:
+        continue
+    if line.startswith(":FORWARD"):
+        forward_policy = line.split()[1] if len(line.split()) > 1 else "ACCEPT"
+    elif line.startswith(":OUTPUT"):
+        output_policy = line.split()[1] if len(line.split()) > 1 else "ACCEPT"
+    elif line.startswith("-A DOCKER-USER"):
+        if line.strip() != "-A DOCKER-USER -j RETURN":
+            docker_user_rules.append(line)
+    elif line.startswith("-A FORWARD"):
+        if not docker_standard_patterns.search(line):
+            forward_rules.append(line)
+
+# Real whitelist = DOCKER-USER has explicit restrict rules, or
+# FORWARD has non-Docker rules that block/limit external destinations
+real_restrict_rules = docker_user_rules + forward_rules
+# Filter to only rules that actually restrict (DROP/REJECT or specific -d targets)
+for r in real_restrict_rules:
+    if "DROP" in r or "REJECT" in r:
+        whitelist_rules.append(r)
+        has_real_egress_restrict = True
+    elif re.search(r'-d \d+\.\d+\.\d+\.\d+', r) and "ACCEPT" in r:
+        whitelist_rules.append(r)
+        has_real_egress_restrict = True
+
+# Docker sets FORWARD DROP by default but adds blanket ACCEPT for all bridges
+# That's NOT a real whitelist — check if there are actual user restrictions
+docker_blanket_accept = any(
+    re.search(r'-A DOCKER-FORWARD -i br-[a-f0-9]+ -j ACCEPT', l.strip())
+    for l in iptables_lines
+)
+
+whitelist_status = "none"
+if has_real_egress_restrict and whitelist_rules:
+    if forward_policy == "DROP" and not docker_blanket_accept:
+        whitelist_status = "strict"
+    else:
+        whitelist_status = "partial"
+
+if whitelist_status == "none":
+    findings.append({
+        "severity": "high",
+        "title": "no-egress-whitelist",
+        "where": "iptables FORWARD/DOCKER-USER chains",
+        "note": "No IP whitelist control — containers have unrestricted outbound access"
+              + (" (FORWARD DROP is bypassed by Docker bridge ACCEPT rules)" if forward_policy == "DROP" else ""),
+    })
+    counts["high"] = counts.get("high", 0) + 1
+elif whitelist_status == "partial":
+    findings.append({
+        "severity": "medium",
+        "title": "partial-egress-whitelist",
+        "where": "iptables FORWARD/DOCKER-USER chains",
+        "note": f"Partial egress rules found ({len(whitelist_rules)} rules) but Docker bridges still allow unrestricted egress",
+    })
+    counts["medium"] = counts.get("medium", 0) + 1
+
+# CN domestic summary
+cn_reachable = [e for e in egress_open if e["target"].split(":")[0] in cn_domestic_ips]
+if cn_reachable:
+    summary_parts.append(f"CN domestic reachable ({len(cn_reachable)} path(s))")
+summary = "; ".join(summary_parts)
+
 data = {
     "module": "egress-control-audit.isolation",
     "status": status,
@@ -215,6 +328,9 @@ data = {
     "counts": counts,
     "lateral_open": lateral_open[:50],
     "egress_open": egress_open[:50],
+    "cn_domestic_reachable": cn_reachable[:20],
+    "whitelist_status": whitelist_status,
+    "whitelist_rules": whitelist_rules[:50],
     "findings": findings[:200],
     "all_probes": all_probes,
 }
@@ -293,7 +409,62 @@ else:
     md.append("**PASS** - No containers can reach external internet.")
 md.append("")
 
-# Full probe matrix
+# CN domestic test
+md.append("## Chinese Domestic Access (114DNS / AliDNS)")
+md.append("")
+if cn_reachable:
+    md.append(f"**FAIL** - {len(cn_reachable)} container(s) can reach Chinese domestic DNS (114.114.114.114 / 223.5.5.5).")
+    md.append("")
+    md.append("| Source Container | CN Target | Risk |")
+    md.append("|-----------------|-----------|------|")
+    for item in cn_reachable:
+        md.append(f"| {item['src']} | {item['target']} | HIGH - unrestricted domestic egress |")
+    md.append("")
+    md.append("This confirms containers have unrestricted outbound access to Chinese internet.")
+else:
+    md.append("**PASS** - No containers can reach Chinese domestic endpoints.")
+md.append("")
+
+# IP Whitelist analysis
+md.append("## Outbound IP Whitelist Control")
+md.append("")
+if whitelist_status == "strict":
+    md.append("**PASS** - Strict egress whitelist detected (default DROP + explicit allow rules).")
+    md.append("")
+    md.append(f"Found {len(whitelist_rules)} egress control rule(s):")
+    md.append("")
+    for r in whitelist_rules[:20]:
+        md.append(f"    {r}")
+elif whitelist_status == "partial":
+    md.append(f"**WARN** - Partial egress rules found ({len(whitelist_rules)} rules) but no default DROP policy.")
+    md.append("")
+    md.append("Rules found:")
+    md.append("")
+    for r in whitelist_rules[:20]:
+        md.append(f"    {r}")
+    md.append("")
+    md.append("### Remediation")
+    md.append("")
+    md.append("- Set default policy to DROP on FORWARD chain: `iptables -P FORWARD DROP`")
+    md.append("- Add explicit ACCEPT rules only for required destinations")
+else:
+    md.append("**FAIL** - No outbound IP whitelist control detected.")
+    md.append("")
+    md.append("The iptables OUTPUT/FORWARD chains have no rules restricting container egress.")
+    md.append("All containers can reach any external IP without restriction.")
+    md.append("")
+    md.append("### Remediation")
+    md.append("")
+    md.append("- Set FORWARD chain default policy to DROP")
+    md.append("- Add whitelist rules for required destinations only:")
+    md.append("  ```")
+    md.append("  iptables -P FORWARD DROP")
+    md.append("  iptables -A FORWARD -d <registry-ip> -p tcp --dport 443 -j ACCEPT")
+    md.append("  iptables -A FORWARD -d <ntp-server> -p udp --dport 123 -j ACCEPT")
+    md.append("  ```")
+    md.append("- Use a forward proxy (squid/envoy) for HTTP(S) egress with domain allowlist")
+    md.append("- In Kubernetes: use NetworkPolicy egress rules with CIDR selectors")
+md.append("")
 md.append("## Full Probe Matrix")
 md.append("")
 md.append("| Source | Target | Result |")
