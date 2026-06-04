@@ -19,6 +19,7 @@ JSON="$OUT/host.json"
 log_info "host privesc audit (linpeas) -> $OUT"
 
 # --- locate linpeas ---
+log_info "Locating LinPEAS..."
 LINPEAS=""
 if [ -x "$LSA_ROOT/bin/linpeas.sh" ]; then
   LINPEAS="$LSA_ROOT/bin/linpeas.sh"
@@ -26,9 +27,11 @@ elif command -v linpeas.sh >/dev/null 2>&1; then
   LINPEAS="$(command -v linpeas.sh)"
 fi
 [ -n "$LINPEAS" ] || die "linpeas.sh not found in $LSA_ROOT/bin/ or PATH"
+log_info "Found LinPEAS: $LINPEAS"
 
 # --- run linpeas with timeout ---
-log_info "running linpeas (timeout=${TIMEOUT}s)..."
+log_info "========== Running LinPEAS (timeout=${TIMEOUT}s) =========="
+log_info "This may take several minutes. Please wait..."
 
 # Prepend find shim to PATH so linpeas skips docker overlay2 layers
 SHIMS_DIR="$LSA_ROOT/bin/shims"
@@ -45,14 +48,17 @@ timeout "$TIMEOUT" bash "$LINPEAS" -q -N > "$OUT/linpeas_raw.txt" 2>>"$LOG" || {
 }
 
 LINES=$(wc -l < "$OUT/linpeas_raw.txt" 2>/dev/null || echo 0)
-log_info "linpeas produced $LINES lines, parsing..."
+log_info "LinPEAS completed. Produced $LINES lines of output."
 
 # --- parse linpeas output into structured findings ---
+log_info "========== Parsing LinPEAS Results =========="
+log_info "Extracting privilege escalation vectors..."
 python3 "$HERE/parse_linpeas.py" "$OUT/linpeas_raw.txt" --out "$JSON" 2>>"$LOG" \
   || log_warn "parse_linpeas.py failed; see host.log"
 
 # Copy raw output as the human-readable log
 cp "$OUT/linpeas_raw.txt" "$LOG"
 
+log_ok "========== Host Privilege Escalation Audit Complete =========="
 log_ok "host privesc done -> $JSON"
 echo "$JSON"

@@ -51,7 +51,17 @@ _RUN_TS="$(date -u +'%Y%m%d-%H%M%S')"
 LSA_RUN_DIR="$LSA_REPORT_DIR/${_RUN_HOST}-${_RUN_TS}"
 export LSA_RUN_DIR
 mkdir -p "$LSA_RUN_DIR"
-log_info "run dir: $LSA_RUN_DIR"
+
+log_info "============================================"
+log_info "  Linux Security Audit - Starting"
+log_info "============================================"
+log_info "Host: $_RUN_HOST"
+log_info "Time: $_RUN_TS (UTC)"
+log_info "Run dir: $LSA_RUN_DIR"
+log_info "Modules: sensitive-info-scan, privesc-escape-check, lateral-movement-scan, egress-control-audit"
+[ "$NO_CONTAINERS" = "1" ] && log_info "Note: --no-containers mode, skipping container scans"
+[ -n "$ONLY" ] && log_info "Note: --only mode, running: $ONLY"
+log_info "============================================"
 
 # --- launch parallel modules (1-3) ---
 pids=()
@@ -59,7 +69,7 @@ launch() {
   local mod="$1"; shift
   if run_module "$mod"; then
     log_info "starting: $mod"
-    ( "$@" ) >"$LSA_RUN_DIR/$mod.launch.log" 2>&1 &
+    ( "$@" ) 2>&1 | tee "$LSA_RUN_DIR/$mod.launch.log" &
     pids+=($!)
   else
     log_info "skip: $mod"
@@ -110,26 +120,24 @@ if run_module lateral-movement-scan; then
       "$LSA_ROOT/skills/lateral-movement-scan/scripts/scan_containers_creds.sh"
     fi
     "$LSA_ROOT/skills/lateral-movement-scan/scripts/run_ssh_audit.sh"
-  ) >"$LSA_RUN_DIR/lateral-movement-scan.launch.log" 2>&1 &
+  ) 2>&1 | tee "$LSA_RUN_DIR/lateral-movement-scan.launch.log" &
   pids+=($!)
 fi
 
 for p in "${pids[@]}"; do wait "$p" || log_warn "module $p exited non-zero"; done
 
+log_info "========== All Parallel Modules Completed =========="
+
 # --- egress audit (serial; samples sockets) ---
 if run_module egress-control-audit; then
   log_info "starting: egress-control-audit"
-  "$LSA_ROOT/skills/egress-control-audit/scripts/egress_check.sh" \
-    >"$LSA_RUN_DIR/egress-control-audit.launch.log" 2>&1 || true
-  "$LSA_ROOT/skills/egress-control-audit/scripts/suggest_allowlist.sh" \
-    >>"$LSA_RUN_DIR/egress-control-audit.launch.log" 2>&1 || true
+  "$LSA_ROOT/skills/egress-control-audit/scripts/egress_check.sh" 2>&1 | tee "$LSA_RUN_DIR/egress-control-audit.launch.log" || true
+  "$LSA_ROOT/skills/egress-control-audit/scripts/suggest_allowlist.sh" 2>&1 | tee -a "$LSA_RUN_DIR/egress-control-audit.launch.log" || true
   if [ "$NO_CONTAINERS" = "0" ]; then
-    "$LSA_ROOT/skills/egress-control-audit/scripts/verify_isolation.sh" \
-      >>"$LSA_RUN_DIR/egress-control-audit.launch.log" 2>&1 || true
+    "$LSA_ROOT/skills/egress-control-audit/scripts/verify_isolation.sh" 2>&1 | tee -a "$LSA_RUN_DIR/egress-control-audit.launch.log" || true
   fi
   # Docker CIS Benchmark
-  "$LSA_ROOT/skills/egress-control-audit/scripts/run_docker_bench.sh" \
-    >>"$LSA_RUN_DIR/egress-control-audit.launch.log" 2>&1 || true
+  "$LSA_ROOT/skills/egress-control-audit/scripts/run_docker_bench.sh" 2>&1 | tee -a "$LSA_RUN_DIR/egress-control-audit.launch.log" || true
   # Merge isolation findings into result.json
   python3 -c '
 import json, os, sys
@@ -215,12 +223,16 @@ open(os.path.join(d,"result.json"),"w").write(json.dumps(result,indent=2,ensure_
 done
 
 # --- aggregate ---
-log_info "aggregating report"
+log_info "========== Aggregating Reports =========="
+log_info "Merging all module results..."
 python3 "$LSA_ROOT/lib/report.py" "$LSA_RUN_DIR" || log_warn "report aggregation failed"
 
 # --- per-module detailed reports ---
-log_info "generating per-module reports"
+log_info "Generating detailed per-module reports..."
 python3 "$LSA_ROOT/lib/gen_module_report.py" "$LSA_RUN_DIR" || log_warn "module reports failed"
 
+log_info "============================================"
+log_ok "  Audit Complete!"
+log_info "============================================"
 log_ok "done: $LSA_RUN_DIR/summary.md"
 echo "$LSA_RUN_DIR"

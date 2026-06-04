@@ -22,37 +22,47 @@ pick_trufflehog() {
 
 TRUFFLEHOG="$(pick_trufflehog)" || die "trufflehog binary not found"
 
+log_info "========== TruffleHog Secret Scanning =========="
+log_info "TruffleHog binary: $TRUFFLEHOG"
+
 # Scan targets: git repos and filesystem paths
 SCAN_TARGETS=""
-# Find git repos in common locations
+log_info "Discovering git repositories..."
 for d in /opt /srv /app /home /root; do
   [ -d "$d" ] || continue
   find "$d" -maxdepth 3 -name ".git" -type d 2>/dev/null | while read gitdir; do
     echo "$(dirname "$gitdir")"
   done
 done > "$OUT_DIR/repos.txt"
+repo_found=$(wc -l < "$OUT_DIR/repos.txt")
+log_info "Found $repo_found git repositories to scan."
 
 # Also scan /etc and common config dirs for filesystem secrets
-log_info "running TruffleHog filesystem scan"
+log_info "========== Scanning Filesystem =========="
+log_info "Scanning /etc, /root, /home for secrets..."
 raw_fs="$OUT_DIR/filesystem.json"
 "$TRUFFLEHOG" filesystem /etc /root /home \
   --json --no-update 2>/dev/null > "$raw_fs" || true
+log_info "Filesystem scan complete."
 
 # Scan git repos
+log_info "========== Scanning Git Repositories =========="
 raw_git="$OUT_DIR/git.json"
 : > "$raw_git"
 repo_count=0
 while IFS= read -r repo; do
   [ -z "$repo" ] && continue
   repo_count=$((repo_count + 1))
-  log_info "  trufflehog git: $repo"
+  log_info "[$repo_count] Scanning git repo: $repo"
   "$TRUFFLEHOG" git "file://$repo" \
     --json --no-update --max-depth 50 2>/dev/null >> "$raw_git" || true
 done < "$OUT_DIR/repos.txt"
 
-log_info "scanned $repo_count git repos + filesystem"
+log_info "Scanned $repo_count git repos + filesystem"
 
 # Parse results
+log_info "========== Parsing TruffleHog Results =========="
 python3 "$HERE/parse_trufflehog.py" "$OUT_DIR"
+log_ok "========== TruffleHog Scan Complete =========="
 log_ok "TruffleHog scan done -> $OUT_DIR/result.json"
 echo "$OUT_DIR/result.json"

@@ -130,10 +130,12 @@ printf '%s\n' "${TARGETS[@]}" > "$OUT/targets.txt"
 LOG="$OUT/scan.log"
 : > "$LOG"
 
+log_info "========== Sensitive Info Scan =========="
 log_info "gitleaks: $GITLEAKS"
 "$GITLEAKS" version 2>&1 | tee -a "$LOG" || true
 log_info "out:      $OUT"
-log_info "targets:  ${TARGETS[*]}"
+log_info "targets:  ${#TARGETS[@]} paths"
+log_info "  - ${TARGETS[*]}"
 log_info "jobs:     $JOBS  max-file: $MAX_FILE_SIZE  archive: $ARCHIVE depth=$MAX_ARCHIVE_DEPTH"
 
 # ---------- detect gitleaks capabilities ----------
@@ -174,6 +176,7 @@ RT_CFG="$OUT/gitleaks-runtime.toml"
 } > "$RT_CFG"
 
 # ---------- per-target scan ----------
+log_info "========== Starting Gitleaks Scan =========="
 scan_one() {
   local target="$1" out_json="$2"
   local args=(detect --no-git --redact=0 \
@@ -189,7 +192,7 @@ scan_one() {
     echo "$GL_HELP" | grep -q -- '--max-archive-depth' \
       && args+=( --max-archive-depth "$MAX_ARCHIVE_DEPTH" )
   fi
-  log_info "  scan: $target"
+  log_info "  Scanning: $target"
   if ! "$GITLEAKS" "${args[@]}" >>"$LOG" 2>&1; then
     log_warn "  gitleaks returned non-zero for $target (continuing)"
   fi
@@ -197,21 +200,26 @@ scan_one() {
 
 PIDS=()
 i=0
+total=${#TARGETS[@]}
 for tgt in "${TARGETS[@]}"; do
-  shard="$OUT/raw-$i.json"
+  i=$((i+1))
+  shard="$OUT/raw-$((i-1)).json"
+  log_info "[$i/$total] Launching scan for: $tgt"
   scan_one "$tgt" "$shard" &
   PIDS+=($!)
-  i=$((i+1))
   # cap concurrency
   if [ "${#PIDS[@]}" -ge "$JOBS" ]; then
     wait "${PIDS[0]}" || true
     PIDS=("${PIDS[@]:1}")
   fi
 done
+log_info "Waiting for ${#PIDS[@]} remaining scans to complete..."
 for p in "${PIDS[@]}"; do wait "$p" || true; done
+log_info "All gitleaks scans completed."
 
 # ---------- env var scan ----------
-log_info "scanning environment variables with gitleaks..."
+log_info "========== Scanning Environment Variables =========="
+log_info "Collecting environment variables from shell and /proc..."
 ENV_DIR="$OUT/env-dump"
 mkdir -p "$ENV_DIR"
 
@@ -219,19 +227,24 @@ mkdir -p "$ENV_DIR"
 env > "$ENV_DIR/shell-env.txt" 2>/dev/null || true
 
 # Process environ from /proc
+proc_count=0
 for pid in $(ls /proc/ 2>/dev/null | grep -E '^[0-9]+$'); do
   if [ -r "/proc/$pid/environ" ]; then
     comm=$(cat "/proc/$pid/comm" 2>/dev/null | tr -c '[:alnum:]._-' '_' || echo "unknown")
     tr '\0' '\n' < "/proc/$pid/environ" > "$ENV_DIR/proc-${pid}-${comm}.txt" 2>/dev/null || true
+    proc_count=$((proc_count + 1))
   fi
 done
+log_info "Collected env from $proc_count processes."
 
 # Run gitleaks on env dump directory
+log_info "Scanning environment variables for secrets..."
 ENV_SHARD="$OUT/raw-env.json"
 scan_one "$ENV_DIR" "$ENV_SHARD" &
 wait $! || true
 
 # ---------- merge shards ----------
+log_info "========== Merging Scan Results =========="
 python3 - "$OUT" <<'PY'
 import json, sys, glob, pathlib
 out = pathlib.Path(sys.argv[1])
@@ -248,12 +261,16 @@ print(f"merged {len(merged)} findings -> raw.json")
 PY
 
 # ---------- triage ----------
+log_info "========== Triage & Filtering =========="
 if [ "$TRIAGE" = "1" ]; then
+  log_info "Running triage to filter false positives..."
   python3 "$HERE/triage.py" "$OUT/raw.json" --out "$OUT/result.json" 2>>"$LOG" \
     || log_warn "triage failed; see scan.log"
 else
+  log_info "Skipping triage (--no-triage)"
   cp "$OUT/raw.json" "$OUT/result.json"
 fi
 
+log_ok "========== Scan Complete =========="
 log_ok "done: $OUT"
 echo "$OUT"

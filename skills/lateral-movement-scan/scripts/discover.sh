@@ -61,20 +61,27 @@ echo "subnets: ${SUBNETS[*]}" >>"$LOG"
 
 # --- ARP scan first (only L2-local nets) ---
 if command -v arp-scan >/dev/null 2>&1; then
-  log_info "arp-scan local"
+  log_info "ARP scanning local network..."
   arp-scan --localnet --quiet 2>>"$LOG" \
     | awk '/^([0-9]+\.){3}[0-9]+/ {print $1}' >> "$LIVE" || true
+  log_info "ARP scan done, found $(wc -l < "$LIVE") hosts so far"
 fi
 
 # --- ICMP+ARP discovery via nmap for each subnet ---
+total_nets=${#SUBNETS[@]}
+net_idx=0
 for net in "${SUBNETS[@]}"; do
-  log_info "nmap -sn $net"
+  net_idx=$((net_idx + 1))
+  log_info "[$net_idx/$total_nets] ICMP ping sweep: $net"
   "$NMAP" -sn -n --max-rate "$RATE" "$net" -oG "$OUT/sn-$(echo "$net" | tr '/.' '_').gnmap" >>"$LOG" 2>&1 || true
 done
 
 # --- TCP-SYN top-50 fallback for ICMP-blocked hosts ---
+log_info "TCP-SYN scan for ICMP-blocked hosts..."
+net_idx=0
 for net in "${SUBNETS[@]}"; do
-  log_info "nmap -sS top50 $net (catch ICMP-blocked)"
+  net_idx=$((net_idx + 1))
+  log_info "[$net_idx/$total_nets] TCP-SYN top-50: $net"
   "$NMAP" -sS -Pn -n -F --top-ports 50 --max-rate "$RATE" --open "$net" \
        -oG "$OUT/syn-$(echo "$net" | tr '/.' '_').gnmap" >>"$LOG" 2>&1 || true
 done
@@ -87,8 +94,10 @@ done
   | sort -u >> "$LIVE"
 
 # --- enumerate container IPs directly ---
+log_info "Enumerating container IPs..."
 for rt in docker nerdctl podman; do
   command -v "$rt" >/dev/null 2>&1 || continue
+  log_info "Checking $rt containers..."
   "$rt" ps -q 2>/dev/null | while read -r cid; do
     "$rt" inspect "$cid" --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{"\n"}}{{end}}' 2>/dev/null
   done | grep -E '^[0-9]' >> "$LIVE" || true

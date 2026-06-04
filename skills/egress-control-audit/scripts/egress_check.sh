@@ -26,17 +26,22 @@ LOG="$OUT/egress_check.log"; : > "$LOG"
 log_info "egress audit -> $OUT (duration=$DURATION)"
 
 # --- routes / addresses ---
+log_info "Collecting network routes and addresses..."
 ip -4 route > "$OUT/routes.txt" 2>>"$LOG" || true
 ip -4 rule >> "$OUT/routes.txt" 2>>"$LOG" || true
 ip -6 route >> "$OUT/routes.txt" 2>>"$LOG" || true
 ip -4 addr  > "$OUT/addrs.txt" 2>>"$LOG" || true
+log_info "Routes and addresses collected."
 
 # --- firewall snapshots ---
+log_info "Collecting firewall rules..."
 command -v iptables-save >/dev/null 2>&1 && iptables-save > "$OUT/iptables.save" 2>>"$LOG" || true
 command -v ip6tables-save >/dev/null 2>&1 && ip6tables-save > "$OUT/ip6tables.save" 2>>"$LOG" || true
 command -v nft >/dev/null 2>&1 && nft list ruleset > "$OUT/nftables.save" 2>>"$LOG" || true
+log_info "Firewall rules collected."
 
 # --- DNS log scrape (best-effort) ---
+log_info "Scraping DNS logs..."
 {
   echo "==== systemd-resolved ===="
   command -v journalctl >/dev/null 2>&1 \
@@ -46,8 +51,10 @@ command -v nft >/dev/null 2>&1 && nft list ruleset > "$OUT/nftables.save" 2>>"$L
   echo "==== /etc/resolv.conf ===="
   cat /etc/resolv.conf 2>/dev/null
 } > "$OUT/dns.log" 2>&1
+log_info "DNS logs collected."
 
 # --- socket sampling ---
+log_info "Sampling established sockets for ${DURATION}..."
 sample_sockets() {
   ss -ntpu state established 2>/dev/null \
     | awk 'NR>1 {print $1,$5,$6,$7}' \
@@ -56,13 +63,19 @@ sample_sockets() {
 
 ALL_SOCK="$OUT/sockets.txt"; : > "$ALL_SOCK"
 end=$(( $(date +%s) + ${DURATION%s} ))
+sample_count=0
 while [ "$(date +%s)" -lt "$end" ]; do
+  sample_count=$((sample_count + 1))
   sample_sockets >> "$ALL_SOCK"
+  remaining=$((end - $(date +%s)))
+  [ $((sample_count % 5)) -eq 0 ] && log_info "Socket sampling: ${sample_count} samples, ${remaining}s remaining..."
   sleep 2
 done
 sort -u "$ALL_SOCK" -o "$ALL_SOCK"
+log_info "Socket sampling done, $(wc -l < "$ALL_SOCK") unique connections."
 
 # --- conntrack (captures closed connections too) ---
+log_info "Collecting conntrack entries..."
 if command -v conntrack >/dev/null 2>&1; then
   conntrack -L -o extended 2>/dev/null | grep -E 'tcp|udp' > "$OUT/conntrack.txt" || true
 elif [ -r /proc/net/nf_conntrack ]; then
@@ -89,11 +102,13 @@ for line in open("/proc/net/tcp").readlines()[1:]:
 sort -u "$ALL_SOCK" -o "$ALL_SOCK"
 
 # --- containers ---
+log_info "Enumerating containers..."
 CONT_TXT="$OUT/containers.txt"; : > "$CONT_TXT"
 RT=""
 for rt in docker nerdctl crictl podman; do
   command -v "$rt" >/dev/null 2>&1 || continue
   RT="$rt"
+  log_info "Found container runtime: $rt"
   echo "==== $rt ====" >> "$CONT_TXT"
   case "$rt" in
     docker|nerdctl|podman)
@@ -108,12 +123,16 @@ for rt in docker nerdctl crictl podman; do
 done
 
 # --- container egress: cat /proc/net/tcp inside each container; decode on host ---
+log_info "Inspecting container network connections..."
 CONT_SOCK="$OUT/container_sockets.txt"; : > "$CONT_SOCK"
 CONT_RAW="$OUT/container_proc_tcp.raw"; : > "$CONT_RAW"
 if [ -n "$RT" ] && [ "$RT" != "crictl" ]; then
+  container_count=$("$RT" ps -q 2>/dev/null | wc -l)
+  log_info "Found $container_count running containers to inspect..."
   while IFS= read -r cid; do
     [[ -n "$cid" ]] || continue
     label="$("$RT" inspect "$cid" --format '{{.Name}}' 2>/dev/null | tr -d '/' || echo "$cid")"
+    log_info "  Inspecting container: $label"
     {
       echo "==== $label tcp ===="
       "$RT" exec "$cid" cat /proc/net/tcp 2>/dev/null || true
@@ -122,6 +141,7 @@ if [ -n "$RT" ] && [ "$RT" != "crictl" ]; then
     } >> "$CONT_RAW"
   done < <("$RT" ps -q 2>/dev/null)
 fi
+log_info "Container network inspection done."
 
 # Decode hex /proc/net/tcp on host
 python3 - "$CONT_RAW" "$CONT_SOCK" <<'PY'

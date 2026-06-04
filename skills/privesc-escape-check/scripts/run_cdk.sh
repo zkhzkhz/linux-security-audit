@@ -22,11 +22,14 @@ OUT="${OUT_OVERRIDE:-$(ensure_run_dir privesc-escape-check)}"
 mkdir -p "$OUT/cdk"
 LOG="$OUT/cdk/cdk.log"; : > "$LOG"
 
+log_info "========== CDK Container Escape Scan =========="
+
 RT=""
 for r in docker nerdctl podman; do
   command -v "$r" >/dev/null 2>&1 && { RT="$r"; break; }
 done
 [ -n "$RT" ] || { log_warn "no container runtime"; exit 0; }
+log_info "Container runtime: $RT"
 
 # Pick CDK binary matching container arch
 pick_cdk() {
@@ -51,14 +54,14 @@ if [ "${#CONTAINERS[@]}" -eq 0 ]; then
   exit 0
 fi
 
-log_info "running CDK evaluate in ${#CONTAINERS[@]} containers"
+log_info "Found ${#CONTAINERS[@]} running containers to scan"
 
 scan_container() {
   local cid="$1"
   local label; label="$("$RT" inspect "$cid" --format '{{.Name}}' 2>/dev/null | tr -d '/' || echo "$cid")"
   local cdir="$OUT/cdk/$label"
   mkdir -p "$cdir"
-  log_info "  cdk: $label"
+  log_info "  Scanning container [$((i+1))/${#CONTAINERS[@]}]: $label"
 
   local cdk_bin; cdk_bin="$(pick_cdk "$cid")"
 
@@ -70,18 +73,23 @@ scan_container() {
   "$RT" exec "$cid" chmod +x /tmp/cdk 2>>"$LOG" || true
 
   # Run CDK evaluate
+  log_info "    Running CDK evaluate..."
   "$RT" exec "$cid" /tmp/cdk evaluate 2>&1 | tee "$cdir/raw.txt" >>"$LOG" || true
 
   # Cleanup
   "$RT" exec "$cid" rm -f /tmp/cdk 2>/dev/null || true
 }
 
+i=0
 for cid in "${CONTAINERS[@]}"; do
   scan_container "$cid"
+  i=$((i+1))
 done
 
 # --- parse CDK output on host, filter false positives ---
+log_info "Parsing CDK results..."
 python3 "$HERE/parse_cdk.py" "$OUT/cdk"
 
+log_ok "========== CDK Scan Complete =========="
 log_ok "CDK scan done -> $OUT/cdk/result.json"
 echo "$OUT/cdk/result.json"
