@@ -8,8 +8,9 @@ from pathlib import Path
 from datetime import datetime
 from collections import defaultdict
 
-SCAN_DIR = Path("/root/linux-security-audit/reports/liteserver-mindie-audit-original/reports/xihe-910b2-prod-node-6-20260604-061752")
-OUTPUT_DIR = Path("/root/linux-security-audit/reports/liteserver-mindie-audit-original")
+# Default paths (can be overridden via command line)
+DEFAULT_SCAN_DIR = Path("/root/linux-security-audit/reports/liteserver-mindie-audit-original/reports/xihe-910b2-prod-node-6-20260604-061752")
+DEFAULT_OUTPUT_DIR = Path("/root/linux-security-audit/reports/liteserver-mindie-audit-original")
 
 def load_json(path):
     with open(path, 'r', encoding='utf-8') as f:
@@ -59,15 +60,32 @@ def analyze_false_positives(findings):
 
     return real_findings, dict(fp_reasons)
 
-def generate_evidence_report():
+def generate_evidence_report(scan_dir=None, output_dir=None):
     """Generate detailed evidence report."""
+    global SCAN_DIR, OUTPUT_DIR
+    if scan_dir:
+        SCAN_DIR = Path(scan_dir)
+    if output_dir:
+        OUTPUT_DIR = Path(output_dir)
+
     lines = []
+
+    # Load summary.json for host info
+    host_info = {"host": "unknown", "arch": "unknown"}
+    summary_json_path = SCAN_DIR.parent / "summary.json"
+    if summary_json_path.exists():
+        try:
+            summary_data = load_json(summary_json_path)
+            host_info["host"] = summary_data.get("host", "unknown")
+            host_info["arch"] = summary_data.get("arch", "unknown")
+        except:
+            pass
 
     lines.append("# 安全审计证据报告")
     lines.append("")
     lines.append(f"**生成时间：** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     lines.append(f"**扫描目录：** {SCAN_DIR}")
-    lines.append(f"**目标主机：** xihe-910b2-prod-node-6 (aarch64)")
+    lines.append(f"**目标主机：** {host_info['host']} ({host_info['arch']})")
     lines.append("")
     lines.append("---")
     lines.append("")
@@ -249,7 +267,8 @@ def generate_evidence_report():
     summary = {
         "generated": datetime.now().isoformat(),
         "scan_dir": str(SCAN_DIR),
-        "host": "xihe-910b2-prod-node-6",
+        "host": host_info["host"],
+        "arch": host_info["arch"],
         "modules": {
             "sensitive-info-scan": {
                 "total": len(sensitive_result.get("findings", [])),
@@ -277,4 +296,9 @@ def generate_evidence_report():
     print(f"Summary JSON written to: {json_path}")
 
 if __name__ == "__main__":
-    generate_evidence_report()
+    if len(sys.argv) > 1:
+        scan_dir = Path(sys.argv[1])
+        output_dir = scan_dir.parent
+        generate_evidence_report(scan_dir, output_dir)
+    else:
+        generate_evidence_report()

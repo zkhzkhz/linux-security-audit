@@ -11,8 +11,9 @@ import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
-SCAN_DIR = Path("/root/linux-security-audit/reports/liteserver-mindie-audit-original/reports/xihe-910b2-prod-node-6-20260604-061752")
-OUTPUT_DIR = Path("/root/linux-security-audit/reports/liteserver-mindie-audit-original")
+# Default scan directory (can be overridden via command line or by detecting latest)
+DEFAULT_SCAN_DIR = Path("/root/linux-security-audit/reports/liteserver-mindie-audit-original/reports/xihe-910b2-prod-node-6-20260604-061752")
+DEFAULT_OUTPUT_DIR = Path("/root/linux-security-audit/reports/liteserver-mindie-audit-original")
 
 # Styles
 HEADER_FILL = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
@@ -69,22 +70,63 @@ def is_false_positive(finding, source="gitleaks"):
     title = finding.get("title", "") or finding.get("DetectorName", "") or finding.get("RuleID", "")
     severity = finding.get("severity", "")
 
-    # FP patterns
-    if "/usr/local/go/" in where and ("testdata" in where or "test" in where):
-        return "Go stdlib 测试数据"
-    if "/overlay2/" in where and any(x in where for x in ["/usr/lib/", "/usr/local/go/", "/usr/share/", "/usr/include/"]):
-        return "Docker 镜像层编译产物"
-    if "test/" in where or "tests/" in where or "_test.py" in where or "testdata" in where:
+    # FP patterns - ordered by specificity
+    # 1. Docker镜像层系统文件 (最大误报来源)
+    if "/overlay2/" in where:
+        if any(x in where for x in ["/usr/share/doc/", "/usr/share/misc/", "/usr/lib/", "/var/cache/dnf/"]):
+            return "Docker镜像层系统文件"
+        if "/usr/local/go/" in where and ("testdata" in where or "test" in where):
+            return "Docker镜像层Go测试数据"
+        if "/home/mindspore/miniconda/" in where and "/lib/python" in where:
+            return "Docker镜像层Python stdlib"
+        if any(x in where for x in ["/usr/include/", "/usr/local/lib/"]):
+            return "Docker镜像层编译产物"
+
+    # 2. Python标准库源码误匹配 (gitcode-token-rule, mysql-cnf-password等)
+    if "/lib/python" in where or "/lib64/python" in where:
+        if any(x in where for x in ["urllib/request.py", "distutils/", "nntplib.py", "hashlib.py"]):
+            return "Python stdlib源码误匹配"
+        if "/test/" in where:
+            return "Python stdlib测试代码"
+
+    # 3. 二进制文件误报
+    if any(where.endswith(ext) for ext in [".mgc", ".solv", ".db", ".bolt", ".bin"]):
+        return "二进制文件误匹配"
+
+    # 4. 测试/示例数据
+    if "/test/" in where or "/tests/" in where or "/testdata/" in where:
         return "测试数据"
-    if "fixture" in where.lower() or "example" in where.lower():
-        return "测试示例"
+    if "/examplefiles/" in where or "/examples/" in where:
+        return "示例文件"
+    if "_test.py" in where or "test_" in where:
+        return "测试代码"
+    if "fixture" in where.lower():
+        return "测试fixture"
+
+    # 5. 文档文件
+    if "/usr/share/doc/" in where or "/docs/" in where:
+        return "文档文件"
+
+    # 6. Go stdlib测试数据
+    if "/usr/local/go/" in where:
+        return "Go stdlib文件"
+
+    # 7. 规则特定误报
+    if title == "gitcode-token-rule" and "urllib/request.py" in where:
+        return "gitcode-token误匹配Python stdlib"
+    if title == "mysql-cnf-password" and "/lib/python" in where:
+        return "mysql-cnf误匹配Python stdlib"
+
+    # 8. 已标记为FP
     if finding.get("is_likely_fp", False):
         return "自动识别误报"
-    # Check entropy for gitleaks format
+
+    # 9. Check entropy for gitleaks format
     entropy = finding.get("Entropy", 0)
     if entropy and entropy < 3.0:
         return "低熵值"
-    # Check note for entropy
+
+    # 10. Check note for entropy
     if "entropy=" in note:
         try:
             entropy_val = float(note.split("entropy=")[1].split()[0])
@@ -92,10 +134,18 @@ def is_false_positive(finding, source="gitleaks"):
                 return "低熵值"
         except:
             pass
+
     return None
 
-def create_excel_report():
+def create_excel_report(scan_dir=None, output_dir=None):
     """Create detailed Excel report with all findings."""
+    # Use provided paths or defaults
+    global SCAN_DIR, OUTPUT_DIR
+    if scan_dir:
+        SCAN_DIR = Path(scan_dir)
+    if output_dir:
+        OUTPUT_DIR = Path(output_dir)
+
     wb = openpyxl.Workbook()
 
     # Sheet 1: Gitleaks findings
@@ -413,4 +463,10 @@ def create_excel_report():
     print(f"  - Egress Control: {len(egress_findings)} findings")
 
 if __name__ == "__main__":
-    create_excel_report()
+    # Support command line argument for scan directory
+    if len(sys.argv) > 1:
+        scan_dir = Path(sys.argv[1])
+        output_dir = scan_dir.parent
+        create_excel_report(scan_dir, output_dir)
+    else:
+        create_excel_report()

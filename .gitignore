@@ -5,4 +5,7 @@ reports/
 *.log
 *.tmp
 __pycache__/
-.claude/
+
+# Claude project settings (but allow skills)
+.claude/*
+!.claude/skills/
