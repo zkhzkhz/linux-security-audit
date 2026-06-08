@@ -1,0 +1,46 @@
+# Windows paths to exclude from scanning
+# One pattern per line, supports regex
+# Lines starting with # are comments
+
+# Windows directory (system files)
+^C:\\Windows\\
+^C:\\Windows32\\
+
+# Program Files
+^C:\\Program Files\\
+^C:\\Program Files \(x86\)\\
+
+# Cache directories
+\\AppData\\Local\\Microsoft\\Windows\\INetCache\\
+\\AppData\\Local\\Google\\Chrome\\User Data\\
+\\AppData\\Local\\Mozilla\\Firefox\\
+\\AppData\\Local\\Microsoft\\Edge\\
+
+# Temp directories
+\\AppData\\Local\\Temp\\
+^C:\\Windows\\Temp\\
+
+# Package caches
+\\node_modules\\
+\\.nuget\\packages\\
+\\.m2\\repository\\
+\\.gradle\\caches\\
+\\.cache\\
+\\.conda\\pkgs\\
+\\.conan\\
+
+# Build outputs
+\\bin\\Debug\\
+\\bin\\Release\\
+\\obj\\
+\\.vs\\
+
+# Log files
+\.log$
+\.evtx$
+
+# Binary files
+\.exe$
+\.dll$
+\.sys$
+\.pdb$
