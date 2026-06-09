@@ -53,7 +53,15 @@ log_info "LinPEAS completed. Produced $LINES lines of output."
 # --- parse linpeas output into structured findings ---
 log_info "========== Parsing LinPEAS Results =========="
 log_info "Extracting privilege escalation vectors..."
-python3 "$HERE/parse_linpeas.py" "$OUT/linpeas_raw.txt" --out "$JSON" 2>>"$LOG" \
+
+# Detect if running as root
+IS_ROOT_FLAG=""
+if [ "$(id -u)" -eq 0 ]; then
+  IS_ROOT_FLAG="--is-root"
+  log_info "Running as root - adjusting writable detection thresholds"
+fi
+
+python3 "$HERE/parse_linpeas.py" "$OUT/linpeas_raw.txt" --out "$JSON" $IS_ROOT_FLAG 2>>"$LOG" \
   || log_warn "parse_linpeas.py failed; see host.log"
 
 # Copy raw output as the human-readable log

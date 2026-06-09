@@ -413,7 +413,9 @@ def generate_excel_report(scan_dir, output_dir, scan_data):
         cell.border = THIN_BORDER
 
     row = 2
-    for i, f in enumerate(gitleaks_findings[:5000], 1):
+    # Excel supports up to 1,048,576 rows, but for practical purposes limit to 100k
+    max_rows = min(len(gitleaks_findings), 100000)
+    for i, f in enumerate(gitleaks_findings[:max_rows], 1):
         file_path = f.get("File", "") or f.get("where", "")
         line_num = f.get("StartLine", "") or ""
         if not line_num and ":" in file_path:
@@ -984,6 +986,32 @@ def analyze_report(archive_path, output_base=None):
     }
 
     # Build summary counts
+    # For sensitive info, if result.json is missing, build from raw.json
+    if not sensitive_result and sensitive_raw:
+        # Build counts from raw data
+        fp_count = sum(1 for f in sensitive_raw if f.get("is_likely_fp", False))
+        # Calculate severity counts based on entropy (same logic as Excel generation)
+        severity_counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
+        for f in sensitive_raw:
+            entropy = f.get("Entropy", 0)
+            if entropy >= 4.5:
+                severity_counts["high"] += 1
+            elif entropy >= 3.5:
+                severity_counts["medium"] += 1
+            elif entropy >= 2.5:
+                severity_counts["low"] += 1
+            else:
+                severity_counts["low"] += 1
+        sensitive_result = {
+            "status": "warn" if sensitive_raw else "ok",
+            "counts": {
+                "total": len(sensitive_raw),
+                "likely_fp": fp_count,
+                **severity_counts
+            },
+            "findings": sensitive_raw[:100]  # Include sample for summary
+        }
+
     for name, result, fp_key in [
         ("敏感信息扫描", sensitive_result, "likely_fp"),
         ("提权逃逸检查", privesc_result, None),

@@ -5,7 +5,7 @@ LinPEAS uses colored markers (stripped to plain text here) and section headers.
 We extract findings by matching known high-signal patterns.
 
 Usage:
-    parse_linpeas.py linpeas_raw.txt [--out host.json]
+    parse_linpeas.py linpeas_raw.txt [--out host.json] [--is-root]
 """
 from __future__ import annotations
 
@@ -19,6 +19,9 @@ FINDINGS: list[dict] = []
 
 ANSI_RE = re.compile(r'\x1b\[[0-9;]*m|\[[0-9;]*m')
 
+# Global flag for root context
+IS_ROOT = False
+
 
 def strip_ansi(s: str) -> str:
     return ANSI_RE.sub('', s)
@@ -28,7 +31,9 @@ def add(sev: str, title: str, where: str, note: str):
     FINDINGS.append({"severity": sev, "title": title, "where": where, "note": note[:300]})
 
 
-def parse(text: str):
+def parse(text: str, is_root: bool = False):
+    global IS_ROOT
+    IS_ROOT = is_root
     text = strip_ansi(text)
     lines = text.splitlines()
 
@@ -60,13 +65,35 @@ def parse(text: str):
                     add("high", "writable-path-dir", f"host:{p}", "directory in PATH writable")
 
         # --- Docker socket accessible ---
+        # On host: critical if docker.sock is writable by non-root users
+        # LinPEAS shows "You have write permissions over Docker socket" which means
+        # the current user can write to it (either via docker group or world-writable)
         if 'docker.sock' in l and ('rw' in l or 'writable' in l.lower() or 'write permissions' in l.lower()):
-            add("critical", "docker-sock-accessible", "host:/var/run/docker.sock", l)
+            # If running as root, this is expected behavior (root can access docker.sock)
+            # Only flag if it's world-writable or accessible via docker group as non-root
+            is_world_writable = re.search(r'(srw|srw.rw.rw|777|666)', l)
+            is_docker_group = 'docker group' in l.lower() or 'docker member' in l.lower()
+            if IS_ROOT:
+                # Root can always access docker.sock - only flag if world-writable
+                if is_world_writable:
+                    add("high", "docker-sock-world-writable", "host:/var/run/docker.sock",
+                        "docker.sock is world-writable (security misconfiguration)")
+            else:
+                # Non-root: flag if accessible via docker group or world-writable
+                if is_world_writable or is_docker_group or 'write permissions' in l.lower():
+                    add("critical", "docker-sock-accessible", "host:/var/run/docker.sock", l)
 
         # --- Writable systemd units ---
+        # Only flag if world-writable or writable by non-root when running as root
         if re.search(r'writable.*\.service', l, re.IGNORECASE) or \
            (l.endswith('.service') and i > 0 and 'writable' in lines[i-1].lower()):
-            add("high", "writable-systemd-unit", f"host:{l}", "writable unit file")
+            is_world_writable = re.search(r'(rw.*rw.*rw|777)', l) or \
+                                (i > 0 and re.search(r'(rw.*rw.*rw|777)', lines[i-1]))
+            if IS_ROOT:
+                if is_world_writable:
+                    add("high", "writable-systemd-unit", f"host:{l}", "world-writable unit file (root context)")
+            else:
+                add("high", "writable-systemd-unit", f"host:{l}", "writable unit file")
 
         # --- /etc/shadow readable ---
         if re.search(r'/etc/shadow.*-r..-r', line):
@@ -82,8 +109,19 @@ def parse(text: str):
                 add("medium", "dangerous-cap", f"host:{binary}", l)
 
         # --- Writable cron jobs ---
+        # Only flag if: (1) non-root can write, or (2) LinPEAS explicitly found world-writable
         if re.search(r'(cron|crontab)', l, re.IGNORECASE) and 'writable' in l.lower():
-            add("high", "writable-cron", f"host:{l}", "writable cron file")
+            # Check for world-writable (o+w) or group-writable with non-root group
+            # LinPEAS output typically shows permissions like "drwxrwxrwx" or mentions "writable by"
+            is_world_writable = re.search(r'(drwxrwxrwx|-rwxrwxrwx|777|rw.*rw.*rw)', l)
+            is_writable_by_others = re.search(r'writable\s+(by|for)\s+(others|everyone|non-root)', l, re.IGNORECASE)
+            # If running as root, only flag world-writable as issue (root can write by default)
+            if IS_ROOT:
+                if is_world_writable or is_writable_by_others:
+                    add("high", "writable-cron", f"host:{l}", "world-writable cron (root context)")
+            else:
+                # Non-root context: any writable cron is a potential issue
+                add("high", "writable-cron", f"host:{l}", "writable cron file")
 
         # --- Kernel exploits suggested ---
         if re.search(r'(CVE-\d{4}-\d+)', l):
@@ -114,13 +152,21 @@ def parse(text: str):
                     add("medium", "private-key-file", f"host:{fpath}", "private key file found")
 
         # --- Writable /etc/passwd ---
+        # Only flag if world-writable or if running as non-root and can write
         if re.search(r'/etc/passwd.*-rw.+-', line) or \
            ('etc/passwd' in l and 'writable' in l.lower()):
-            add("critical", "passwd-writable", "host:/etc/passwd", "writable by non-root")
+            is_world_writable = re.search(r'-rw.rw.rw.|777', line)
+            if IS_ROOT:
+                if is_world_writable:
+                    add("critical", "passwd-writable", "host:/etc/passwd", "world-writable (root context)")
+            else:
+                add("critical", "passwd-writable", "host:/etc/passwd", "writable by non-root")
 
         # --- Container: docker group membership ---
+        # Only relevant for non-root users (root already has docker access)
         if re.search(r'(docker|lxd|lxc)\s', l) and 'group' in l.lower():
-            add("high", "docker-group", "host", l)
+            if not IS_ROOT:
+                add("high", "docker-group", "host", l)
 
         # --- Container: running in privileged mode ---
         if re.search(r'privileged\s*(mode|container|=true)', l, re.IGNORECASE):
@@ -168,6 +214,8 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("input", help="linpeas_raw.txt path")
     p.add_argument("--out", default=None, help="output JSON path")
+    p.add_argument("--is-root", action="store_true",
+                   help="indicate scan is running as root (affects writable detection)")
     args = p.parse_args()
 
     inpath = Path(args.input)
@@ -176,7 +224,7 @@ def main():
         sys.exit(2)
 
     text = inpath.read_text(encoding="utf-8", errors="replace")
-    parse(text)
+    parse(text, is_root=args.is_root)
 
     findings = dedup(FINDINGS)
     sev_rank = {"critical": 4, "high": 3, "medium": 2, "low": 1, "info": 0}

@@ -14,8 +14,8 @@ SEVERITY_MAP = {
     "CAP_SYS_PTRACE": ("high", "can attach to host processes"),
     "CAP_NET_ADMIN": ("high", "can manipulate network stack"),
     "CAP_DAC_READ_SEARCH": ("high", "can read any file bypassing permissions"),
+    "CAP_DAC_OVERRIDE": ("medium", "can bypass file permission checks"),
     "sensitive mount": ("high", "host filesystem mounted"),
-    "/etc": ("high", "host /etc accessible"),
     "/root": ("high", "host /root accessible"),
     "namespace": ("medium", "shared namespace with host"),
     "K8S Service Account": ("medium", "kubernetes SA token found"),
@@ -24,6 +24,26 @@ SEVERITY_MAP = {
     "AppArmor": ("low", "no AppArmor profile"),
     "Seccomp": ("low", "seccomp not enforcing"),
 }
+
+# Patterns that indicate false positives or non-issues
+FALSE_POSITIVE_PATTERNS = [
+    r'/etc\s+(is|appears|seems)\s+(ok|normal|default)',
+    r'/etc\s+not\s+(mounted|found|accessible)',
+    r'no\s+(sensitive|host)\s+mounts?\s+found',
+    r'privileged.*false',
+    r'privileged.*no',
+    r'privileged.*disabled',
+    r'docker\s*sock.*not\s+(found|mounted|accessible)',
+    r'no\s+docker\s+sock',
+]
+
+
+def is_false_positive(line):
+    """Check if line matches known false positive patterns."""
+    for pattern in FALSE_POSITIVE_PATTERNS:
+        if re.search(pattern, line, re.IGNORECASE):
+            return True
+    return False
 
 
 def parse_deepce_output(text, container_name):
@@ -34,14 +54,30 @@ def parse_deepce_output(text, container_name):
         stripped = line.strip()
         if not stripped:
             continue
+
+        # Skip known false positives
+        if is_false_positive(stripped):
+            continue
+
         for pattern, (severity, note) in SEVERITY_MAP.items():
             if pattern.lower() in stripped.lower():
-                if "not found" in stripped.lower() or "no" == stripped.lower()[:2]:
+                # Additional check: "not found" or "no" prefix often indicates absence
+                if "not found" in stripped.lower():
                     continue
+                # Skip lines that start with "No" (indicating absence)
+                if stripped.lower().startswith("no "):
+                    continue
+
+                # Special handling for /etc - only flag if it's explicitly a host mount
+                if pattern == "/etc":
+                    # Look for indicators that this is actually a host /etc mount
+                    if "host" not in stripped.lower() and "mount" not in stripped.lower():
+                        continue
+
                 findings.append({
                     "severity": severity,
                     "title": f"deepce-{pattern.lower().replace(' ', '-').replace('/', '')}",
-                    "where": f"{container_name}",
+                    "where": f"{container_name}:container",
                     "note": note + f" | {stripped[:120]}",
                 })
                 break

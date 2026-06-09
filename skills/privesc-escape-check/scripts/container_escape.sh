@@ -109,8 +109,30 @@ if [ -r /proc/mounts ]; then
   if grep -E '^[^ ]+ /host[ /]' /proc/mounts >/dev/null 2>&1; then
     add "high" "host-bind-mount" "container:/host" "/host appears to be a bind from outside"
   fi
-  if grep -E ' /etc[ /].* (rw,|.*,rw)' /proc/mounts | grep -vE 'overlay|tmpfs' >/dev/null 2>&1; then
-    add "high" "host-etc-bound" "container" "host /etc bound rw"
+  # host-etc-bound: Check if /etc is actually mounted from host device (not overlay)
+  # Real host mount: device is /dev/vda*, /dev/sda*, /dev/nvme*, etc. (not overlay)
+  # Container's own /etc: device is "overlay" or similar union fs
+  if [ -r /proc/mounts ]; then
+    # Get the device backing /etc mount
+    etc_device=$(awk '$2 == "/etc" {print $1}' /proc/mounts 2>/dev/null)
+    etc_fstype=$(awk '$2 == "/etc" {print $3}' /proc/mounts 2>/dev/null)
+    etc_opts=$(awk '$2 == "/etc" {print $4}' /proc/mounts 2>/dev/null)
+    # Check if it's rw and backed by a real block device (not overlay/tmpfs/union fs)
+    case "$etc_device" in
+      overlay|overlayfs|tmpfs|proc|sysfs|cgroup|devtmpfs|none|mqueue|hugetlbfs|autofs|securityfs|pstore|configfs|debugfs|tracefs|bpf)
+        # These are container-internal or virtual filesystems - not host mount
+        ;;
+      *)
+        # Check if rw and looks like a real device mount
+        if [ -n "$etc_device" ] && echo "$etc_opts" | grep -qE '(^|,)rw(,|$)'; then
+          # Additional check: verify device exists as block device on host
+          if [ -e "/sys/class/block/${etc_device#/dev/}" ] 2>/dev/null || \
+             [ -b "$etc_device" ] 2>/dev/null; then
+            add "high" "host-etc-bound" "container:/etc" "host /etc ($etc_device) bound rw"
+          fi
+        fi
+        ;;
+    esac
   fi
   if grep -E ' /proc /proc proc ' /proc/mounts | grep -v 'ro,' >/dev/null 2>&1; then
     : # default; not necessarily insecure
