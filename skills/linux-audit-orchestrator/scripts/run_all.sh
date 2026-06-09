@@ -6,6 +6,7 @@
 # Usage:
 #   run_all.sh [--only csv] [--no-containers] [--egress-apply]
 #              [--isolate-apply] [--full]
+#              [--container <name>] [--container-id <id>] [--runtime docker|crictl]
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -19,6 +20,9 @@ NO_CONTAINERS=0
 EGRESS_APPLY=0
 ISOLATE_APPLY=0
 FULL=0
+CONTAINER_NAME=""
+CONTAINER_ID=""
+RUNTIME="docker"
 while [ $# -gt 0 ]; do
   case "$1" in
     --only)           ONLY="$2"; shift 2;;
@@ -26,10 +30,18 @@ while [ $# -gt 0 ]; do
     --egress-apply)   EGRESS_APPLY=1; shift;;
     --isolate-apply)  ISOLATE_APPLY=1; shift;;
     --full)           FULL=1; shift;;
-    -h|--help)        sed -n '1,12p' "$0"; exit 0;;
+    --container)      CONTAINER_NAME="$2"; shift 2;;
+    --container-id)   CONTAINER_ID="$2"; shift 2;;
+    --runtime)        RUNTIME="$2"; shift 2;;
+    -h|--help)        sed -n '1,13p' "$0"; exit 0;;
     *) die "unknown flag: $1";;
   esac
 done
+
+# If specific container is specified, set mode to scan only that container
+if [ -n "$CONTAINER_NAME" ] || [ -n "$CONTAINER_ID" ]; then
+  NO_CONTAINERS=0
+fi
 
 run_module() {
   local name="$1"
@@ -92,8 +104,13 @@ if [ "$NO_CONTAINERS" = "1" ]; then
   launch privesc-escape-check \
     "$LSA_ROOT/skills/privesc-escape-check/scripts/host_privesc.sh"
 else
+  # Build enter_container.sh args based on container selection
+  ENTER_ARGS="--mode both --runtime $RUNTIME"
+  [ -n "$CONTAINER_NAME" ] && ENTER_ARGS="$ENTER_ARGS --container $CONTAINER_NAME"
+  [ -n "$CONTAINER_ID" ] && ENTER_ARGS="$ENTER_ARGS --container-id $CONTAINER_ID"
+
   launch privesc-escape-check bash -c "
-    '$LSA_ROOT/skills/privesc-escape-check/scripts/enter_container.sh' --mode both
+    '$LSA_ROOT/skills/privesc-escape-check/scripts/enter_container.sh' $ENTER_ARGS
     '$LSA_ROOT/skills/privesc-escape-check/scripts/run_cdk.sh'
     '$LSA_ROOT/skills/privesc-escape-check/scripts/run_deepce.sh'
     '$LSA_ROOT/skills/privesc-escape-check/scripts/run_amicontained.sh'

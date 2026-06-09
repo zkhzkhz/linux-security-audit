@@ -7,6 +7,8 @@
 #   --mode both      try cp-exec first; fall back to nsenter on failure
 #
 # --runtime auto|docker|nerdctl|crictl|podman   (default auto)
+# --container <name>                            scan specific container by name
+# --container-id <id>                           scan specific container by ID
 # --keep                                        leave dropped script in container
 #
 # Outputs $OUT/containers/<id>.json + .log and an aggregate $OUT/result.json
@@ -19,15 +21,19 @@ SKILL_DIR="$(cd "$HERE/.." && pwd)"
 LSA_ROOT="${LSA_ROOT:-$(cd "$SKILL_DIR/../.." && pwd)}"
 . "$LSA_ROOT/lib/common.sh"
 
-MODE="cp-exec"
+MODE="nsenter"
 RUNTIME="auto"
 KEEP=0
+CONTAINER_NAME=""
+CONTAINER_ID=""
 while [ $# -gt 0 ]; do
   case "$1" in
-    --mode)    MODE="$2"; shift 2;;
-    --runtime) RUNTIME="$2"; shift 2;;
-    --keep)    KEEP=1; shift;;
-    -h|--help) sed -n '1,30p' "$0"; exit 0;;
+    --mode)         MODE="$2"; shift 2;;
+    --runtime)      RUNTIME="$2"; shift 2;;
+    --container)    CONTAINER_NAME="$2"; shift 2;;
+    --container-id) CONTAINER_ID="$2"; shift 2;;
+    --keep)         KEEP=1; shift;;
+    -h|--help)      sed -n '1,35p' "$0"; exit 0;;
     *) die "unknown flag: $1";;
   esac
 done
@@ -143,6 +149,15 @@ nsenter_one() {
     || return 4
 }
 
+# --- resolve container ID if name specified ---
+resolve_container_id() {
+  local rt="$1" name="$2"
+  case "$rt" in
+    docker|nerdctl|podman) "$rt" inspect "$name" -f '{{.Id}}' 2>/dev/null || echo "";;
+    crictl)                "$rt" inspect "$name" 2>/dev/null | grep -oP '"id":\s*"\K[^"]+' | head -1 || echo "";;
+  esac
+}
+
 # --- run host privesc ---
 log_info "running host privesc"
 HOST_JSON="$OUT/host.json"
@@ -154,6 +169,23 @@ if [ -z "$RUNTIME_BIN" ]; then
   log_warn "no container runtime found; producing host-only result"
 else
   log_info "runtime: $RUNTIME_BIN  mode: $MODE"
+
+  # If specific container is requested, scan only that one
+  if [ -n "$CONTAINER_ID" ]; then
+    IDS="$CONTAINER_ID"
+  elif [ -n "$CONTAINER_NAME" ]; then
+    log_info "resolving container: $CONTAINER_NAME"
+    RESOLVED_ID="$(resolve_container_id "$RUNTIME_BIN" "$CONTAINER_NAME")"
+    if [ -z "$RESOLVED_ID" ]; then
+      die "container not found: $CONTAINER_NAME"
+    fi
+    IDS="$RESOLVED_ID"
+    log_info "resolved to ID: $RESOLVED_ID"
+  else
+    # List all running containers
+    IDS="$(list_containers "$RUNTIME_BIN")"
+  fi
+
   while IFS= read -r id; do
     [ -z "$id" ] && continue
     name=""
@@ -240,7 +272,7 @@ open(out_path,"w").write(json.dumps(d,indent=2,ensure_ascii=False))
 os.remove(hc_path)
 PY
     fi
-  done < <(list_containers "$RUNTIME_BIN")
+  done <<< "$IDS"
 fi
 
 # --- aggregate ---
