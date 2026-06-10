@@ -21,7 +21,14 @@ pick_peirates() {
 
 PEIRATES="$(pick_peirates)" || die "peirates binary not found"
 
-containers=$(docker ps --format '{{.Names}}' 2>/dev/null)
+# Support container-specific scan via environment variables
+if [ -n "${LSA_CONTAINER_ID:-}" ]; then
+  containers=$(docker inspect "$LSA_CONTAINER_ID" -f '{{.Name}}' 2>/dev/null | sed 's/^//')
+elif [ -n "${LSA_CONTAINER_NAME:-}" ]; then
+  containers="$LSA_CONTAINER_NAME"
+else
+  containers=$(docker ps --format '{{.Names}}' 2>/dev/null)
+fi
 [ -z "$containers" ] && { log_info "no running containers"; exit 0; }
 
 log_info "checking containers for k8s SA tokens"

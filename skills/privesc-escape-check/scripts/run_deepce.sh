@@ -13,7 +13,14 @@ mkdir -p "$OUT_DIR"
 DEEPCE="$LSA_ROOT/bin/deepce.sh"
 [ -f "$DEEPCE" ] || die "deepce.sh not found at $DEEPCE"
 
-containers=$(docker ps --format '{{.Names}}' 2>/dev/null)
+# Support container-specific scan via environment variables
+if [ -n "${LSA_CONTAINER_ID:-}" ]; then
+  containers=$(docker inspect "$LSA_CONTAINER_ID" -f '{{.Name}}' 2>/dev/null | sed 's/^//')
+elif [ -n "${LSA_CONTAINER_NAME:-}" ]; then
+  containers="$LSA_CONTAINER_NAME"
+else
+  containers=$(docker ps --format '{{.Names}}' 2>/dev/null)
+fi
 [ -z "$containers" ] && { log_info "no running containers"; exit 0; }
 
 log_info "running Deepce in $(echo "$containers" | wc -l) containers"

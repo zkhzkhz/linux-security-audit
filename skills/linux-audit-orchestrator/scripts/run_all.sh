@@ -41,6 +41,10 @@ done
 # If specific container is specified, set mode to scan only that container
 if [ -n "$CONTAINER_NAME" ] || [ -n "$CONTAINER_ID" ]; then
   NO_CONTAINERS=0
+  # Export for sub-scripts to use
+  export LSA_CONTAINER_NAME="$CONTAINER_NAME"
+  export LSA_CONTAINER_ID="$CONTAINER_ID"
+  export LSA_RUNTIME="$RUNTIME"
 fi
 
 run_module() {

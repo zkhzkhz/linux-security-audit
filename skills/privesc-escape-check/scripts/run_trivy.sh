@@ -35,7 +35,20 @@ pick_trivy() {
 
 TRIVY="$(pick_trivy)" || die "trivy binary not found"
 
-images=$(docker ps --format '{{.Image}}' 2>/dev/null | sort -u)
+# Support container-specific scan via environment variables
+if [ -n "${LSA_CONTAINER_ID:-}" ]; then
+  # Get image from specific container
+  image=$(docker inspect "$LSA_CONTAINER_ID" -f '{{.Image}}' 2>/dev/null || docker inspect "$LSA_CONTAINER_ID" -f '{{.Config.Image}}' 2>/dev/null)
+  [ -z "$image" ] && { log_warn "cannot get image for container $LSA_CONTAINER_ID"; exit 0; }
+  images="$image"
+elif [ -n "${LSA_CONTAINER_NAME:-}" ]; then
+  # Get image from container name
+  image=$(docker inspect "$LSA_CONTAINER_NAME" -f '{{.Image}}' 2>/dev/null || docker inspect "$LSA_CONTAINER_NAME" -f '{{.Config.Image}}' 2>/dev/null)
+  [ -z "$image" ] && { log_warn "cannot get image for container $LSA_CONTAINER_NAME"; exit 0; }
+  images="$image"
+else
+  images=$(docker ps --format '{{.Image}}' 2>/dev/null | sort -u)
+fi
 [ -z "$images" ] && { log_info "no running containers"; exit 0; }
 
 log_info "scanning $(echo "$images" | wc -l) images with Trivy"
