@@ -66,7 +66,10 @@ fetch_gitleaks_one() {
   # Check if compressed version exists and decompress
   if [ -f "$gz_target" ] && [ ! -x "$target" ]; then
     log_info "decompressing $gz_target..."
-    (cd "$DEST" && gunzip -k "gitleaks-${os}-${arch}.gz" && chmod +x "gitleaks-${os}-${arch}")
+    # Use cp + gunzip instead of -k (not supported on older gzip)
+    cp "$gz_target" "$DEST/gitleaks-${os}-${arch}.tmp.gz"
+    (cd "$DEST" && gunzip "gitleaks-${os}-${arch}.tmp.gz" && mv "gitleaks-${os}-${arch}.tmp" "gitleaks-${os}-${arch}" && chmod +x "gitleaks-${os}-${arch}")
+    rm -f "$DEST/gitleaks-${os}-${arch}.tmp.gz" 2>/dev/null
     if [ -x "$target" ]; then
       log_ok "decompressed: $target"
       return 0
@@ -97,7 +100,10 @@ fetch_trivy_one() {
   # Check if compressed version exists and decompress
   if [ -f "$gz_target" ] && [ ! -x "$target" ]; then
     log_info "decompressing $gz_target..."
-    (cd "$DEST" && gunzip -k "trivy-${os}-${arch}.gz" && chmod +x "trivy-${os}-${arch}")
+    # Use cp + gunzip instead of -k (not supported on older gzip)
+    cp "$gz_target" "$DEST/trivy-${os}-${arch}.tmp.gz"
+    (cd "$DEST" && gunzip "trivy-${os}-${arch}.tmp.gz" && mv "trivy-${os}-${arch}.tmp" "trivy-${os}-${arch}" && chmod +x "trivy-${os}-${arch}")
+    rm -f "$DEST/trivy-${os}-${arch}.tmp.gz" 2>/dev/null
     if [ -x "$target" ]; then
       log_ok "decompressed: $target"
       return 0

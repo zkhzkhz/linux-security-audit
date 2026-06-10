@@ -16,10 +16,12 @@ pick_trivy() {
   local bin="$LSA_ROOT/bin/trivy-linux-$arch"
   local gzip_bin="$LSA_ROOT/bin/trivy-linux-$arch.gz"
 
-  # Decompress gzipped version if needed
+  # Decompress gzipped version if needed (use cp+gunzip for older gzip compatibility)
   if [ -f "$gzip_bin" ] && [ ! -x "$bin" ]; then
     log_info "decompressing $gzip_bin..."
-    (cd "$LSA_ROOT/bin" && gunzip -k "trivy-linux-$arch.gz" && chmod +x "trivy-linux-$arch") || return 1
+    cp "$gzip_bin" "$LSA_ROOT/bin/trivy-linux-$arch.tmp.gz"
+    (cd "$LSA_ROOT/bin" && gunzip "trivy-linux-$arch.tmp.gz" && mv "trivy-linux-$arch.tmp" "trivy-linux-$arch" && chmod +x "trivy-linux-$arch") || return 1
+    rm -f "$LSA_ROOT/bin/trivy-linux-$arch.tmp.gz" 2>/dev/null
   fi
 
   if [ -x "$bin" ]; then echo "$bin"; return 0; fi

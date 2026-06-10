@@ -38,9 +38,11 @@ pick_gitleaks() {
   if [ "$os" = "windows" ]; then
     local cand="$LSA_ROOT/bin/windows/gitleaks.exe"
     local gz_cand="$LSA_ROOT/bin/windows/gitleaks.exe.gz"
-    # Decompress if needed
+    # Decompress if needed (use cp+gunzip for older gzip compatibility)
     if [ -f "$gz_cand" ] && [ ! -x "$cand" ]; then
-      (cd "$LSA_ROOT/bin/windows" && gunzip -k gitleaks.exe.gz && chmod +x gitleaks.exe) 2>/dev/null || true
+      cp "$gz_cand" "$LSA_ROOT/bin/windows/gitleaks.exe.tmp.gz"
+      (cd "$LSA_ROOT/bin/windows" && gunzip gitleaks.exe.tmp.gz && mv gitleaks.exe.tmp gitleaks.exe && chmod +x gitleaks.exe) 2>/dev/null || true
+      rm -f "$LSA_ROOT/bin/windows/gitleaks.exe.tmp.gz" 2>/dev/null
     fi
     if [ -x "$cand" ]; then echo "$cand"; return 0; fi
   fi
@@ -48,9 +50,11 @@ pick_gitleaks() {
   # Linux/macOS path
   local cand="$LSA_ROOT/bin/gitleaks-${os}-${arch}"
   local gz_cand="$LSA_ROOT/bin/gitleaks-${os}-${arch}.gz"
-  # Decompress if needed
+  # Decompress if needed (use cp+gunzip for older gzip compatibility)
   if [ -f "$gz_cand" ] && [ ! -x "$cand" ]; then
-    (cd "$LSA_ROOT/bin" && gunzip -k "gitleaks-${os}-${arch}.gz" && chmod +x "gitleaks-${os}-${arch}") 2>/dev/null || true
+    cp "$gz_cand" "$LSA_ROOT/bin/gitleaks-${os}-${arch}.tmp.gz"
+    (cd "$LSA_ROOT/bin" && gunzip "gitleaks-${os}-${arch}.tmp.gz" && mv "gitleaks-${os}-${arch}.tmp" "gitleaks-${os}-${arch}" && chmod +x "gitleaks-${os}-${arch}") 2>/dev/null || true
+    rm -f "$LSA_ROOT/bin/gitleaks-${os}-${arch}.tmp.gz" 2>/dev/null
   fi
   if [ -x "$cand" ]; then echo "$cand"; return 0; fi
   if command -v gitleaks >/dev/null 2>&1; then command -v gitleaks; return 0; fi
