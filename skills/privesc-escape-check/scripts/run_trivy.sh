@@ -14,6 +14,14 @@ pick_trivy() {
   local arch
   arch="$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')"
   local bin="$LSA_ROOT/bin/trivy-linux-$arch"
+  local gzip_bin="$LSA_ROOT/bin/trivy-linux-$arch.gz"
+
+  # Decompress gzipped version if needed
+  if [ -f "$gzip_bin" ] && [ ! -x "$bin" ]; then
+    log_info "decompressing $gzip_bin..."
+    gunzip -k "$gzip_bin" && chmod +x "$bin" || return 1
+  fi
+
   if [ -x "$bin" ]; then echo "$bin"; return 0; fi
   if command -v trivy >/dev/null 2>&1; then echo "trivy"; return 0; fi
   # Try to fetch

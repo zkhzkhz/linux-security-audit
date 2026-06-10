@@ -77,7 +77,7 @@ fetch_gitleaks_one() {
 
 fetch_trivy_one() {
   local arch="$1" os="$2"
-  local TRIVY_VER="${VERSION:-v0.70.0}"
+  local TRIVY_VER="${VERSION:-v0.71.0}"
   TRIVY_VER="${TRIVY_VER#v}"
   local target="$DEST/trivy-${os}-${arch}"
   if [ -x "$target" ]; then
@@ -85,10 +85,23 @@ fetch_trivy_one() {
     return 0
   fi
   local suffix=""
-  case "$arch" in
-    amd64) suffix="Linux-64bit";;
-    arm64) suffix="Linux-ARM64";;
-    *) log_warn "skip unsupported arch: $arch"; return 0;;
+  case "$os" in
+    linux)
+      case "$arch" in
+        amd64) suffix="Linux-64bit";;
+        arm64) suffix="Linux-ARM64";;
+        *) log_warn "skip unsupported arch: $arch"; return 0;;
+      esac
+      ;;
+    windows)
+      case "$arch" in
+        amd64) suffix="Windows-64bit";;
+        *) log_warn "skip unsupported arch for windows: $arch"; return 0;;
+      esac
+      target="$DEST/trivy-${os}-${arch}.exe"
+      ;;
+    *)
+      log_warn "skip unsupported os: $os"; return 0;;
   esac
   local url="https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VER}/trivy_${TRIVY_VER}_${suffix}.tar.gz"
   local tmp; tmp="$(mktemp -d)"
