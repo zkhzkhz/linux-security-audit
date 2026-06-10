@@ -14,15 +14,10 @@ mkdir -p "$OUT"
 
 LES_SCRIPT="$LSA_ROOT/bin/linux-exploit-suggester.sh"
 
-# Download if not present
+# Verify script exists
 if [[ ! -x "$LES_SCRIPT" ]]; then
-  log_info "Downloading linux-exploit-suggester..."
-  mkdir -p "$(dirname "$LES_SCRIPT")"
-  curl -sL "https://raw.githubusercontent.com/mzet-/linux-exploit-suggester/master/linux-exploit-suggester.sh" \
-    -o "$LES_SCRIPT" && chmod +x "$LES_SCRIPT" || {
-    log_warn "Failed to download linux-exploit-suggester"
-    exit 1
-  }
+  log_warn "linux-exploit-suggester.sh not found at $LES_SCRIPT"
+  exit 1
 fi
 
 log_info "Running Linux Exploit Suggester..."
