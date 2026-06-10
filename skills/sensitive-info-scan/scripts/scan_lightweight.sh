@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # Lightweight gitleaks scan for specific targets.
-# Supports: history, env, directories, or combined.
+# Supports: history, env, proc-env, directories, or combined.
 #
 # Usage:
 #   scan_lightweight.sh --target history
 #   scan_lightweight.sh --target env
+#   scan_lightweight.sh --target proc-env
+#   scan_lightweight.sh --target proc-env:1234
 #   scan_lightweight.sh --target /path/to/dir
 #   scan_lightweight.sh --target all
 #   scan_lightweight.sh --target history,env,/etc
@@ -33,7 +35,7 @@ done
 [ -z "$TARGET" ] && TARGET="all"
 
 OUT_DIR="${LSA_RUN_DIR:-$LSA_REPORT_DIR/adhoc-$(date -u +%Y%m%d-%H%M%S)}/sensitive-scan-light"
-mkdir -p "$OUT_DIR"
+mkdir -p "$OUT_DIR/raw"
 
 # Resolve gitleaks binary
 GITLEAKS="$(pick_gitleaks || true)"
@@ -72,42 +74,40 @@ scan_target() {
   local t="$1"
   local cmd=""
   local tmp_out=""
+  local raw_out=""
 
   case "$t" in
     history)
-      # Scan bash history files
       log_info "Scanning: bash history files"
       tmp_out=$(mktemp)
+      raw_out="$OUT_DIR/raw/history.json"
       cmd="$GITLEAKS detect $GITLEAKS_OPTS --source=$HOME/.bash_history $FORMAT_FLAG json $REPORT_FLAG $tmp_out"
       log_info "  Command: $cmd"
       eval "$cmd" 2>&1 | head -5 || true
-      [ -s "$tmp_out" ] && scanned_targets+=("history")
+      [ -s "$tmp_out" ] && { cp "$tmp_out" "$raw_out"; scanned_targets+=("history"); }
       ;;
 
     env)
-      # Scan environment variables
       log_info "Scanning: environment variables"
       tmp_out=$(mktemp)
-      # Dump env to temp file and scan
+      raw_out="$OUT_DIR/raw/env.json"
       local env_file=$(mktemp)
       env > "$env_file"
       cmd="$GITLEAKS detect $GITLEAKS_OPTS --source=$env_file $FORMAT_FLAG json $REPORT_FLAG $tmp_out"
       log_info "  Command: $cmd"
       eval "$cmd" 2>&1 | head -5 || true
       rm -f "$env_file"
-      [ -s "$tmp_out" ] && scanned_targets+=("env")
+      [ -s "$tmp_out" ] && { cp "$tmp_out" "$raw_out"; scanned_targets+=("env"); }
       ;;
 
     proc-env)
-      # Scan all process environment variables via /proc
       log_info "Scanning: process environment variables (/proc/*/environ)"
       tmp_out=$(mktemp)
+      raw_out="$OUT_DIR/raw/proc-env.json"
       local proc_env_file=$(mktemp)
-      # Collect all process envs (null-separated, convert to lines)
       for pid_dir in /proc/[0-9]*; do
         local pid=${pid_dir##*/}
         [ -r "$pid_dir/environ" ] || continue
-        # Skip kernel processes and self
         [ "$pid" = "$$" ] && continue
         tr '\0' '\n' < "$pid_dir/environ" 2>/dev/null | sed "s/^/PID=$pid: /" >> "$proc_env_file"
       done
@@ -116,21 +116,21 @@ scan_target() {
       log_info "  Collected env from $(grep -c '^PID=' "$proc_env_file" 2>/dev/null || echo 0) processes"
       eval "$cmd" 2>&1 | head -5 || true
       rm -f "$proc_env_file"
-      [ -s "$tmp_out" ] && scanned_targets+=("proc-env")
+      [ -s "$tmp_out" ] && { cp "$tmp_out" "$raw_out"; scanned_targets+=("proc-env"); }
       ;;
 
     proc-env:*)
-      # Scan specific PID environment variables
       local pid="${t#proc-env:}"
       log_info "Scanning: process $pid environment variables"
       tmp_out=$(mktemp)
+      raw_out="$OUT_DIR/raw/proc-env-$pid.json"
       local proc_env_file=$(mktemp)
       if [ -r "/proc/$pid/environ" ]; then
         tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null >> "$proc_env_file"
         cmd="$GITLEAKS detect $GITLEAKS_OPTS --source=$proc_env_file $FORMAT_FLAG json $REPORT_FLAG $tmp_out"
         log_info "  Command: $cmd"
         eval "$cmd" 2>&1 | head -5 || true
-        [ -s "$tmp_out" ] && scanned_targets+=("proc-env:$pid")
+        [ -s "$tmp_out" ] && { cp "$tmp_out" "$raw_out"; scanned_targets+=("proc-env:$pid"); }
       else
         log_warn "Cannot read /proc/$pid/environ"
       fi
@@ -138,65 +138,65 @@ scan_target() {
       ;;
 
     all)
-      # Scan common locations
-      log_info "Scanning: common locations (history, env, /etc, /home, /opt)"
+      log_info "Scanning: common locations (history, env, /etc)"
 
-      # History
       for hist in /root/.bash_history /home/*/.bash_history; do
         [ -f "$hist" ] || continue
         tmp_out=$(mktemp)
+        raw_out="$OUT_DIR/raw/history-$(basename $hist).json"
         cmd="$GITLEAKS detect $GITLEAKS_OPTS --source=$hist $FORMAT_FLAG json $REPORT_FLAG $tmp_out"
         log_info "  Command: $cmd"
         eval "$cmd" 2>&1 | tail -1 || true
         [ -s "$tmp_out" ] && {
+          cp "$tmp_out" "$raw_out"
           scanned_targets+=("history:$hist")
           all_findings=$(python3 -c "import json,sys; a=json.loads(sys.argv[1]); b=json.load(open('$tmp_out')); print(json.dumps(a+b.get('findings',[])))" "$all_findings" 2>/dev/null || echo "$all_findings")
         }
         rm -f "$tmp_out"
       done
 
-      # Env
       local env_file=$(mktemp)
       env > "$env_file"
       tmp_out=$(mktemp)
+      raw_out="$OUT_DIR/raw/env.json"
       cmd="$GITLEAKS detect $GITLEAKS_OPTS --source=$env_file $FORMAT_FLAG json $REPORT_FLAG $tmp_out"
       log_info "  Command: $cmd"
       eval "$cmd" 2>&1 | tail -1 || true
       rm -f "$env_file"
       [ -s "$tmp_out" ] && {
+        cp "$tmp_out" "$raw_out"
         scanned_targets+=("env")
         all_findings=$(python3 -c "import json,sys; a=json.loads(sys.argv[1]); b=json.load(open('$tmp_out')); print(json.dumps(a+b.get('findings',[])))" "$all_findings" 2>/dev/null || echo "$all_findings")
       }
       rm -f "$tmp_out"
 
-      # /etc
       tmp_out=$(mktemp)
+      raw_out="$OUT_DIR/raw/etc.json"
       cmd="$GITLEAKS detect $GITLEAKS_OPTS --source=/etc $FORMAT_FLAG json $REPORT_FLAG $tmp_out"
       log_info "  Command: $cmd"
       eval "$cmd" 2>&1 | tail -1 || true
       [ -s "$tmp_out" ] && {
+        cp "$tmp_out" "$raw_out"
         scanned_targets+=("/etc")
         all_findings=$(python3 -c "import json,sys; a=json.loads(sys.argv[1]); b=json.load(open('$tmp_out')); print(json.dumps(a+b.get('findings',[])))" "$all_findings" 2>/dev/null || echo "$all_findings")
       }
       rm -f "$tmp_out"
-
-      # Skip remaining since we handled 'all' specially
       return
       ;;
 
     /*)
-      # Directory path
       [ -d "$t" ] || { log_warn "Directory not found: $t"; return 1; }
       log_info "Scanning: $t"
       tmp_out=$(mktemp)
+      raw_out="$OUT_DIR/raw/dir-$(echo $t | tr '/' '_').json"
       cmd="$GITLEAKS detect $GITLEAKS_OPTS --source=$t $FORMAT_FLAG json $REPORT_FLAG $tmp_out"
       log_info "  Command: $cmd"
       eval "$cmd" 2>&1 | tail -1 || true
-      [ -s "$tmp_out" ] && scanned_targets+=("$t")
+      [ -s "$tmp_out" ] && { cp "$tmp_out" "$raw_out"; scanned_targets+=("$t"); }
       ;;
 
     *)
-      log_warn "Unknown target: $t (use: history, env, all, or /path/to/dir)"
+      log_warn "Unknown target: $t (use: history, env, proc-env, all, or /path/to/dir)"
       return 1
       ;;
   esac
@@ -213,9 +213,9 @@ log_info "============================================"
 log_info "Lightweight Gitleaks Scan"
 log_info "============================================"
 log_info "Targets: $TARGET"
+log_info "Output: $OUT_DIR"
 log_info "============================================"
 
-# Initialize array
 scanned_targets=()
 
 for t in "${TARGETS[@]}"; do
@@ -225,7 +225,6 @@ done
 # Generate result
 log_info "Generating report..."
 
-# Handle empty array
 if [ ${#scanned_targets[@]} -eq 0 ]; then
   TARGETS_STR=""
 else
@@ -282,4 +281,5 @@ Path(out_dir + "/result.json").write_text(json.dumps(result, indent=2, ensure_as
 PY
 
 log_ok "Scan complete -> $OUT_DIR/result.json"
+log_info "Raw reports: $OUT_DIR/raw/"
 echo "$OUT_DIR/result.json"
