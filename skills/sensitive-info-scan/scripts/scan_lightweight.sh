@@ -176,6 +176,9 @@ log_info "============================================"
 log_info "Targets: $TARGET"
 log_info "============================================"
 
+# Initialize array
+scanned_targets=()
+
 for t in "${TARGETS[@]}"; do
   scan_target "$t"
 done
@@ -183,7 +186,14 @@ done
 # Generate result
 log_info "Generating report..."
 
-python3 - "$OUT_DIR" "$all_findings" "${scanned_targets[*]}" << 'PY'
+# Handle empty array
+if [ ${#scanned_targets[@]} -eq 0 ]; then
+  TARGETS_STR=""
+else
+  TARGETS_STR="${scanned_targets[*]}"
+fi
+
+python3 - "$OUT_DIR" "$all_findings" "$TARGETS_STR" << 'PY'
 import json, sys
 from pathlib import Path
 
