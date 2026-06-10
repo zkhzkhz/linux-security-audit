@@ -19,7 +19,7 @@ pick_trivy() {
   # Decompress gzipped version if needed
   if [ -f "$gzip_bin" ] && [ ! -x "$bin" ]; then
     log_info "decompressing $gzip_bin..."
-    gunzip -k "$gzip_bin" && chmod +x "$bin" || return 1
+    (cd "$LSA_ROOT/bin" && gunzip -k "trivy-linux-$arch.gz" && chmod +x "trivy-linux-$arch") || return 1
   fi
 
   if [ -x "$bin" ]; then echo "$bin"; return 0; fi
