@@ -7,7 +7,7 @@ title = "linux-security-audit gitleaks rules"
 # Loaded by scripts/scan.sh. Path exclusions are appended at runtime from
 # config/exclude-paths.txt and config/allowlist.toml is merged in.
 
-[allowlist]
+[[allowlists]]
 description = "global allowlist (paths + obvious dummy values)"
 paths = [
     '''(^|/)node_modules(/|$)''',
