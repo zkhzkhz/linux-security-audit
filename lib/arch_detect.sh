@@ -37,11 +37,21 @@ pick_gitleaks() {
   # Windows path
   if [ "$os" = "windows" ]; then
     local cand="$LSA_ROOT/bin/windows/gitleaks.exe"
+    local gz_cand="$LSA_ROOT/bin/windows/gitleaks.exe.gz"
+    # Decompress if needed
+    if [ -f "$gz_cand" ] && [ ! -x "$cand" ]; then
+      gunzip -k "$gz_cand" && chmod +x "$cand" 2>/dev/null || true
+    fi
     if [ -x "$cand" ]; then echo "$cand"; return 0; fi
   fi
 
   # Linux/macOS path
   local cand="$LSA_ROOT/bin/gitleaks-${os}-${arch}"
+  local gz_cand="$LSA_ROOT/bin/gitleaks-${os}-${arch}.gz"
+  # Decompress if needed
+  if [ -f "$gz_cand" ] && [ ! -x "$cand" ]; then
+    gunzip -k "$gz_cand" && chmod +x "$cand" 2>/dev/null || true
+  fi
   if [ -x "$cand" ]; then echo "$cand"; return 0; fi
   if command -v gitleaks >/dev/null 2>&1; then command -v gitleaks; return 0; fi
   return 1
