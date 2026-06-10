@@ -61,6 +61,18 @@ fetch_gitleaks_one() {
     *) log_warn "skip unsupported arch: $arch"; return 0;;
   esac
   local target="$DEST/gitleaks-${os}-${arch}"
+  local gz_target="$DEST/gitleaks-${os}-${arch}.gz"
+
+  # Check if compressed version exists and decompress
+  if [ -f "$gz_target" ] && [ ! -x "$target" ]; then
+    log_info "decompressing $gz_target..."
+    (cd "$DEST" && gunzip -k "gitleaks-${os}-${arch}.gz" && chmod +x "gitleaks-${os}-${arch}")
+    if [ -x "$target" ]; then
+      log_ok "decompressed: $target"
+      return 0
+    fi
+  fi
+
   if [ -x "$target" ]; then
     log_info "already exists: $target"
     return 0
@@ -80,6 +92,18 @@ fetch_trivy_one() {
   local TRIVY_VER="${VERSION:-v0.71.0}"
   TRIVY_VER="${TRIVY_VER#v}"
   local target="$DEST/trivy-${os}-${arch}"
+  local gz_target="$DEST/trivy-${os}-${arch}.gz"
+
+  # Check if compressed version exists and decompress
+  if [ -f "$gz_target" ] && [ ! -x "$target" ]; then
+    log_info "decompressing $gz_target..."
+    (cd "$DEST" && gunzip -k "trivy-${os}-${arch}.gz" && chmod +x "trivy-${os}-${arch}")
+    if [ -x "$target" ]; then
+      log_ok "decompressed: $target"
+      return 0
+    fi
+  fi
+
   if [ -x "$target" ]; then
     log_info "already exists: $target"
     return 0
@@ -99,6 +123,7 @@ fetch_trivy_one() {
         *) log_warn "skip unsupported arch for windows: $arch"; return 0;;
       esac
       target="$DEST/trivy-${os}-${arch}.exe"
+      gz_target="$DEST/trivy-${os}-${arch}.exe.gz"
       ;;
     *)
       log_warn "skip unsupported os: $os"; return 0;;
