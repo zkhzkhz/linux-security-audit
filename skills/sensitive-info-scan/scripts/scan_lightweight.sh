@@ -98,6 +98,45 @@ scan_target() {
       [ -s "$tmp_out" ] && scanned_targets+=("env")
       ;;
 
+    proc-env)
+      # Scan all process environment variables via /proc
+      log_info "Scanning: process environment variables (/proc/*/environ)"
+      tmp_out=$(mktemp)
+      local proc_env_file=$(mktemp)
+      # Collect all process envs (null-separated, convert to lines)
+      for pid_dir in /proc/[0-9]*; do
+        local pid=${pid_dir##*/}
+        [ -r "$pid_dir/environ" ] || continue
+        # Skip kernel processes and self
+        [ "$pid" = "$$" ] && continue
+        tr '\0' '\n' < "$pid_dir/environ" 2>/dev/null | sed "s/^/PID=$pid: /" >> "$proc_env_file"
+      done
+      cmd="$GITLEAKS detect $GITLEAKS_OPTS --source=$proc_env_file $FORMAT_FLAG json $REPORT_FLAG $tmp_out"
+      log_info "  Command: $cmd"
+      log_info "  Collected env from $(grep -c '^PID=' "$proc_env_file" 2>/dev/null || echo 0) processes"
+      eval "$cmd" 2>&1 | head -5 || true
+      rm -f "$proc_env_file"
+      [ -s "$tmp_out" ] && scanned_targets+=("proc-env")
+      ;;
+
+    proc-env:*)
+      # Scan specific PID environment variables
+      local pid="${t#proc-env:}"
+      log_info "Scanning: process $pid environment variables"
+      tmp_out=$(mktemp)
+      local proc_env_file=$(mktemp)
+      if [ -r "/proc/$pid/environ" ]; then
+        tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null >> "$proc_env_file"
+        cmd="$GITLEAKS detect $GITLEAKS_OPTS --source=$proc_env_file $FORMAT_FLAG json $REPORT_FLAG $tmp_out"
+        log_info "  Command: $cmd"
+        eval "$cmd" 2>&1 | head -5 || true
+        [ -s "$tmp_out" ] && scanned_targets+=("proc-env:$pid")
+      else
+        log_warn "Cannot read /proc/$pid/environ"
+      fi
+      rm -f "$proc_env_file"
+      ;;
+
     all)
       # Scan common locations
       log_info "Scanning: common locations (history, env, /etc, /home, /opt)"
