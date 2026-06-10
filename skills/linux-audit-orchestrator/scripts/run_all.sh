@@ -105,12 +105,14 @@ if [ "$NO_CONTAINERS" = "1" ]; then
     "$LSA_ROOT/skills/privesc-escape-check/scripts/host_privesc.sh"
 else
   # Build enter_container.sh args based on container selection
-  ENTER_ARGS="--mode both --runtime $RUNTIME"
+  # Default to 'host' mode - check from host via docker/crictl inspect only
+  ENTER_ARGS="--mode host --runtime $RUNTIME"
   [ -n "$CONTAINER_NAME" ] && ENTER_ARGS="$ENTER_ARGS --container $CONTAINER_NAME"
   [ -n "$CONTAINER_ID" ] && ENTER_ARGS="$ENTER_ARGS --container-id $CONTAINER_ID"
 
   launch privesc-escape-check bash -c "
     '$LSA_ROOT/skills/privesc-escape-check/scripts/enter_container.sh' $ENTER_ARGS
+    '$LSA_ROOT/skills/privesc-escape-check/scripts/run_les.sh'
     '$LSA_ROOT/skills/privesc-escape-check/scripts/run_cdk.sh'
     '$LSA_ROOT/skills/privesc-escape-check/scripts/run_deepce.sh'
     '$LSA_ROOT/skills/privesc-escape-check/scripts/run_amicontained.sh'
@@ -193,7 +195,7 @@ import json, sys, os
 d = sys.argv[1]
 findings = []
 counts = {}
-for name in ("host.json", "cdk/result.json", "deepce/result.json", "amicontained/result.json", "peirates/result.json", "trivy/result.json", "kube-bench/result.json"):
+for name in ("host.json", "les/result.json", "cdk/result.json", "deepce/result.json", "amicontained/result.json", "peirates/result.json", "trivy/result.json", "kube-bench/result.json"):
     p = os.path.join(d, name)
     if not os.path.isfile(p): continue
     data = json.loads(open(p).read())

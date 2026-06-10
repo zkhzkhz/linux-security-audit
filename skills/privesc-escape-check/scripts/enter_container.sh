@@ -2,8 +2,9 @@
 # Enumerate containers from the host and run container_escape.sh inside each.
 #
 # Modes:
-#   --mode cp-exec   (default) drop the script via runtime cp + exec
+#   --mode host      (default) check from host via docker/crictl inspect only
 #   --mode nsenter   join namespaces from host using nsenter (root)
+#   --mode cp-exec   drop the script via runtime cp + exec
 #   --mode both      try cp-exec first; fall back to nsenter on failure
 #
 # --runtime auto|docker|nerdctl|crictl|podman   (default auto)
@@ -21,7 +22,7 @@ SKILL_DIR="$(cd "$HERE/.." && pwd)"
 LSA_ROOT="${LSA_ROOT:-$(cd "$SKILL_DIR/../.." && pwd)}"
 . "$LSA_ROOT/lib/common.sh"
 
-MODE="nsenter"
+MODE="host"
 RUNTIME="auto"
 KEEP=0
 CONTAINER_NAME=""
@@ -209,6 +210,9 @@ except Exception: pass' 2>/dev/null || true)"
       --out "$OUT/containers/$id.hostcheck.json" >>"$out_log" 2>&1 || true
 
     case "$MODE" in
+      host)
+        # Host-side checks already done above, no need to enter container
+        ;;
       cp-exec)
         cp_exec_one "$RUNTIME_BIN" "$id" "$out_json" "$out_log" || log_warn "  cp-exec failed for $id";;
       nsenter)
