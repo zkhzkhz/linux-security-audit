@@ -48,8 +48,8 @@ log_info "Using gitleaks: $GITLEAKS ($GITLEAKS_VERSION)"
 CONFIG="$LSA_ROOT/skills/sensitive-info-scan/config/gitleaks-custom.toml"
 [ -f "$CONFIG" ] || CONFIG=""
 
-# Common gitleaks options
-GITLEAKS_OPTS="--no-git --exit-code 0"
+# Common gitleaks options (directory scan mode with max depth)
+GITLEAKS_OPTS="--exit-code 0 --depth 100"
 [ -f "$CONFIG" ] && GITLEAKS_OPTS="$GITLEAKS_OPTS --config $CONFIG"
 
 # Check gitleaks version for flag compatibility
@@ -80,30 +80,30 @@ scan_target() {
     history)
       log_info "Scanning: bash history files"
       tmp_out=$(mktemp)
-      raw_out="$OUT_DIR/raw/history.json"
+      raw_out="$OUT_DIR/raw/history.json.gz"
       cmd="$GITLEAKS detect $GITLEAKS_OPTS --source=$HOME/.bash_history $FORMAT_FLAG json $REPORT_FLAG $tmp_out"
       log_info "  Command: $cmd"
       eval "$cmd" 2>&1 | head -5 || true
-      [ -s "$tmp_out" ] && { cp "$tmp_out" "$raw_out"; scanned_targets+=("history"); }
+      [ -s "$tmp_out" ] && { gzip -c "$tmp_out" > "$raw_out"; scanned_targets+=("history"); }
       ;;
 
     env)
       log_info "Scanning: environment variables"
       tmp_out=$(mktemp)
-      raw_out="$OUT_DIR/raw/env.json"
+      raw_out="$OUT_DIR/raw/env.json.gz"
       local env_file=$(mktemp)
       env > "$env_file"
       cmd="$GITLEAKS detect $GITLEAKS_OPTS --source=$env_file $FORMAT_FLAG json $REPORT_FLAG $tmp_out"
       log_info "  Command: $cmd"
       eval "$cmd" 2>&1 | head -5 || true
       rm -f "$env_file"
-      [ -s "$tmp_out" ] && { cp "$tmp_out" "$raw_out"; scanned_targets+=("env"); }
+      [ -s "$tmp_out" ] && { gzip -c "$tmp_out" > "$raw_out"; scanned_targets+=("env"); }
       ;;
 
     proc-env)
       log_info "Scanning: process environment variables (/proc/*/environ)"
       tmp_out=$(mktemp)
-      raw_out="$OUT_DIR/raw/proc-env.json"
+      raw_out="$OUT_DIR/raw/proc-env.json.gz"
       local proc_env_file=$(mktemp)
       for pid_dir in /proc/[0-9]*; do
         local pid=${pid_dir##*/}
@@ -116,21 +116,21 @@ scan_target() {
       log_info "  Collected env from $(grep -c '^PID=' "$proc_env_file" 2>/dev/null || echo 0) processes"
       eval "$cmd" 2>&1 | head -5 || true
       rm -f "$proc_env_file"
-      [ -s "$tmp_out" ] && { cp "$tmp_out" "$raw_out"; scanned_targets+=("proc-env"); }
+      [ -s "$tmp_out" ] && { gzip -c "$tmp_out" > "$raw_out"; scanned_targets+=("proc-env"); }
       ;;
 
     proc-env:*)
       local pid="${t#proc-env:}"
       log_info "Scanning: process $pid environment variables"
       tmp_out=$(mktemp)
-      raw_out="$OUT_DIR/raw/proc-env-$pid.json"
+      raw_out="$OUT_DIR/raw/proc-env-$pid.json.gz"
       local proc_env_file=$(mktemp)
       if [ -r "/proc/$pid/environ" ]; then
         tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null >> "$proc_env_file"
         cmd="$GITLEAKS detect $GITLEAKS_OPTS --source=$proc_env_file $FORMAT_FLAG json $REPORT_FLAG $tmp_out"
         log_info "  Command: $cmd"
         eval "$cmd" 2>&1 | head -5 || true
-        [ -s "$tmp_out" ] && { cp "$tmp_out" "$raw_out"; scanned_targets+=("proc-env:$pid"); }
+        [ -s "$tmp_out" ] && { gzip -c "$tmp_out" > "$raw_out"; scanned_targets+=("proc-env:$pid"); }
       else
         log_warn "Cannot read /proc/$pid/environ"
       fi
@@ -143,12 +143,12 @@ scan_target() {
       for hist in /root/.bash_history /home/*/.bash_history; do
         [ -f "$hist" ] || continue
         tmp_out=$(mktemp)
-        raw_out="$OUT_DIR/raw/history-$(basename $hist).json"
+        raw_out="$OUT_DIR/raw/history-$(basename $hist).json.gz"
         cmd="$GITLEAKS detect $GITLEAKS_OPTS --source=$hist $FORMAT_FLAG json $REPORT_FLAG $tmp_out"
         log_info "  Command: $cmd"
         eval "$cmd" 2>&1 | tail -1 || true
         [ -s "$tmp_out" ] && {
-          cp "$tmp_out" "$raw_out"
+          gzip -c "$tmp_out" > "$raw_out"
           scanned_targets+=("history:$hist")
           all_findings=$(python3 -c "import json,sys; a=json.loads(sys.argv[1]); b=json.load(open('$tmp_out')); print(json.dumps(a+b.get('findings',[])))" "$all_findings" 2>/dev/null || echo "$all_findings")
         }
@@ -158,25 +158,25 @@ scan_target() {
       local env_file=$(mktemp)
       env > "$env_file"
       tmp_out=$(mktemp)
-      raw_out="$OUT_DIR/raw/env.json"
+      raw_out="$OUT_DIR/raw/env.json.gz"
       cmd="$GITLEAKS detect $GITLEAKS_OPTS --source=$env_file $FORMAT_FLAG json $REPORT_FLAG $tmp_out"
       log_info "  Command: $cmd"
       eval "$cmd" 2>&1 | tail -1 || true
       rm -f "$env_file"
       [ -s "$tmp_out" ] && {
-        cp "$tmp_out" "$raw_out"
+        gzip -c "$tmp_out" > "$raw_out"
         scanned_targets+=("env")
         all_findings=$(python3 -c "import json,sys; a=json.loads(sys.argv[1]); b=json.load(open('$tmp_out')); print(json.dumps(a+b.get('findings',[])))" "$all_findings" 2>/dev/null || echo "$all_findings")
       }
       rm -f "$tmp_out"
 
       tmp_out=$(mktemp)
-      raw_out="$OUT_DIR/raw/etc.json"
+      raw_out="$OUT_DIR/raw/etc.json.gz"
       cmd="$GITLEAKS detect $GITLEAKS_OPTS --source=/etc $FORMAT_FLAG json $REPORT_FLAG $tmp_out"
       log_info "  Command: $cmd"
       eval "$cmd" 2>&1 | tail -1 || true
       [ -s "$tmp_out" ] && {
-        cp "$tmp_out" "$raw_out"
+        gzip -c "$tmp_out" > "$raw_out"
         scanned_targets+=("/etc")
         all_findings=$(python3 -c "import json,sys; a=json.loads(sys.argv[1]); b=json.load(open('$tmp_out')); print(json.dumps(a+b.get('findings',[])))" "$all_findings" 2>/dev/null || echo "$all_findings")
       }
@@ -188,11 +188,11 @@ scan_target() {
       [ -d "$t" ] || { log_warn "Directory not found: $t"; return 1; }
       log_info "Scanning: $t"
       tmp_out=$(mktemp)
-      raw_out="$OUT_DIR/raw/dir-$(echo $t | tr '/' '_').json"
+      raw_out="$OUT_DIR/raw/dir-$(echo $t | tr '/' '_').json.gz"
       cmd="$GITLEAKS detect $GITLEAKS_OPTS --source=$t $FORMAT_FLAG json $REPORT_FLAG $tmp_out"
       log_info "  Command: $cmd"
       eval "$cmd" 2>&1 | tail -1 || true
-      [ -s "$tmp_out" ] && { cp "$tmp_out" "$raw_out"; scanned_targets+=("$t"); }
+      [ -s "$tmp_out" ] && { gzip -c "$tmp_out" > "$raw_out"; scanned_targets+=("$t"); }
       ;;
 
     *)
