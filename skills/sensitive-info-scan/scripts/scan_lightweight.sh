@@ -48,8 +48,8 @@ log_info "Using gitleaks: $GITLEAKS ($GITLEAKS_VERSION)"
 CONFIG="$LSA_ROOT/skills/sensitive-info-scan/config/gitleaks-custom.toml"
 [ -f "$CONFIG" ] || CONFIG=""
 
-# Common gitleaks options (directory scan mode with max depth)
-GITLEAKS_OPTS="--exit-code 0 --depth 100"
+# Common gitleaks options (directory scan mode)
+GITLEAKS_OPTS="--exit-code 0 --max-archive-depth 100 --max-decode-depth 100"
 [ -f "$CONFIG" ] && GITLEAKS_OPTS="$GITLEAKS_OPTS --config $CONFIG"
 
 # Check gitleaks version for flag compatibility
