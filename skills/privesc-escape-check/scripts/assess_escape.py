@@ -405,19 +405,140 @@ def render_text(r):
     return "\n".join(lines)
 
 
+def list_containers(runtime: str):
+    """Return list of (id, runtime) for all running containers.
+
+    `runtime=auto` enumerates every CLI present on the box and merges results
+    (a single container will only show up under the first runtime that owns it
+    — duplicate IDs are filtered)."""
+    seen = set()
+    out = []
+    rts = []
+    if runtime == "auto":
+        for rt in ("docker", "nerdctl", "podman", "crictl"):
+            if sh(["which", rt]).strip():
+                rts.append(rt)
+    else:
+        rts = [runtime]
+    for rt in rts:
+        if rt in ("docker", "podman", "nerdctl"):
+            ids = sh([rt, "ps", "-q", "--no-trunc"]).split()
+        else:
+            ids = sh(["crictl", "ps", "-q"]).split()
+        for cid in ids:
+            if cid not in seen:
+                seen.add(cid)
+                out.append((cid, rt))
+    return out
+
+
+def aggregate(results):
+    """Build an LSA-style result.json from a list of per-container reports."""
+    findings = []
+    counts = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
+    sev_rank = {"CRITICAL": "critical", "HIGH": "high",
+                "MEDIUM": "medium", "OK": "info"}
+    worst = "OK"
+    rank = {"OK": 0, "MEDIUM": 1, "HIGH": 2, "CRITICAL": 3}
+    for r in results:
+        v = r["verdict"]
+        if rank[v] > rank[worst]:
+            worst = v
+        sev = sev_rank[v]
+        counts[sev] += 1
+        # one finding per container, plus one per escape path so summary.md
+        # surfaces concrete vectors not just the verdict
+        findings.append({
+            "severity": sev,
+            "title": f"container-{v.lower()}",
+            "where": f"{r['runtime']}:{r['container'][:12]}",
+            "note": r["verdict_note"],
+        })
+        for p in r["escape_paths"]:
+            findings.append({
+                "severity": p["severity"],
+                "title": p["id"],
+                "where": f"{r['runtime']}:{r['container'][:12]}",
+                "note": p["note"],
+            })
+            counts[p["severity"]] = counts.get(p["severity"], 0) + 1
+    sev_order = {"critical": 4, "high": 3, "medium": 2, "low": 1, "info": 0}
+    findings.sort(key=lambda f: sev_order.get(f["severity"], 0), reverse=True)
+    status = "warn" if worst in ("HIGH", "CRITICAL") else "ok"
+    summary = ", ".join(f"{k}:{v}" for k, v in counts.items() if v) or "no findings"
+    return {
+        "module": "privesc-escape-check.assess_escape",
+        "status": status,
+        "summary": summary,
+        "counts": counts,
+        "worst_verdict": worst,
+        "containers": results,
+        "findings": findings,
+    }
+
+
 def main():
     ap = argparse.ArgumentParser(description="One-shot container escape risk assessment")
-    ap.add_argument("container", help="container id or name")
+    ap.add_argument("container", nargs="?",
+                    help="container id or name (omit if using --all)")
+    ap.add_argument("--all", action="store_true",
+                    help="assess every running container on this host")
     ap.add_argument("--runtime", default="auto",
                     help="docker|podman|nerdctl|crictl|auto (default auto)")
     ap.add_argument("--json", action="store_true", help="emit JSON instead of text")
+    ap.add_argument("--out", default=None,
+                    help="write aggregate JSON to file (implies --json semantics for the file)")
     args = ap.parse_args()
 
+    if args.all and args.container:
+        print("error: pass either <container> or --all, not both", file=sys.stderr)
+        sys.exit(2)
+    if not args.all and not args.container:
+        ap.print_usage(sys.stderr)
+        sys.exit(2)
+
+    if args.all:
+        targets = list_containers(args.runtime)
+        if not targets:
+            print("no running containers found", file=sys.stderr)
+            if args.out:
+                Path(args.out).write_text(json.dumps({
+                    "module": "privesc-escape-check.assess_escape",
+                    "status": "ok", "summary": "no containers",
+                    "counts": {}, "worst_verdict": "OK",
+                    "containers": [], "findings": [],
+                }, indent=2, ensure_ascii=False))
+            sys.exit(0)
+        results = []
+        for cid, rt in targets:
+            r, _rt, err = assess(cid, rt)
+            if err:
+                if not args.json:
+                    print(f"[skip {cid[:12]}] {err}", file=sys.stderr)
+                continue
+            results.append(r)
+            if not args.json and not args.out:
+                print(render_text(r))
+                print("-" * 60)
+        agg = aggregate(results)
+        if args.out:
+            Path(args.out).write_text(json.dumps(agg, indent=2, ensure_ascii=False))
+            print(f"assess_escape: wrote {args.out} ({agg['summary']}, worst={agg['worst_verdict']})")
+        elif args.json:
+            print(json.dumps(agg, indent=2, ensure_ascii=False))
+        else:
+            print(f"==> overall worst: {agg['worst_verdict']} ({agg['summary']})")
+        sys.exit(0 if agg["worst_verdict"] in ("OK", "MEDIUM") else 1)
+
+    # single container path
     r, rt, err = assess(args.container, args.runtime)
     if err:
         print(f"error: {err}", file=sys.stderr)
         sys.exit(2)
-    if args.json:
+    if args.out:
+        Path(args.out).write_text(json.dumps(aggregate([r]), indent=2, ensure_ascii=False))
+        print(f"assess_escape: wrote {args.out} (verdict={r['verdict']})")
+    elif args.json:
         print(json.dumps(r, indent=2, ensure_ascii=False))
     else:
         print(render_text(r))

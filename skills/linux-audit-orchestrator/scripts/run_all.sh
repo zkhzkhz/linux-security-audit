@@ -114,7 +114,22 @@ else
   [ -n "$CONTAINER_NAME" ] && ENTER_ARGS="$ENTER_ARGS --container $CONTAINER_NAME"
   [ -n "$CONTAINER_ID" ] && ENTER_ARGS="$ENTER_ARGS --container-id $CONTAINER_ID"
 
+  # assess_escape.py target: a single container if pinned, else --all.
+  # --runtime auto lets it cycle through docker/nerdctl/podman/crictl so
+  # containerd-only hosts (no docker) still get full coverage.
+  if [ -n "$CONTAINER_ID" ]; then
+    ASSESS_TARGET="$CONTAINER_ID"
+  elif [ -n "$CONTAINER_NAME" ]; then
+    ASSESS_TARGET="$CONTAINER_NAME"
+  else
+    ASSESS_TARGET="--all"
+  fi
+
   launch privesc-escape-check bash -c "
+    mkdir -p '$LSA_RUN_DIR/privesc-escape-check'
+    python3 '$LSA_ROOT/skills/privesc-escape-check/scripts/assess_escape.py' \
+      $ASSESS_TARGET --runtime auto \
+      --out '$LSA_RUN_DIR/privesc-escape-check/assess_escape.json' || true
     '$LSA_ROOT/skills/privesc-escape-check/scripts/enter_container.sh' $ENTER_ARGS
     '$LSA_ROOT/skills/privesc-escape-check/scripts/run_les.sh'
     '$LSA_ROOT/skills/privesc-escape-check/scripts/run_cdk.sh'
@@ -193,13 +208,13 @@ fi
 for mod_dir in "$LSA_RUN_DIR"/*/; do
   [ -f "$mod_dir/result.json" ] && continue
   # privesc-escape-check: merge host.json + all sub-tool results
-  if [ -f "$mod_dir/host.json" ] || [ -f "$mod_dir/cdk/result.json" ]; then
+  if [ -f "$mod_dir/host.json" ] || [ -f "$mod_dir/assess_escape.json" ] || [ -f "$mod_dir/cdk/result.json" ]; then
     python3 -c '
 import json, sys, os
 d = sys.argv[1]
 findings = []
 counts = {}
-for name in ("host.json", "les/result.json", "cdk/result.json", "deepce/result.json", "amicontained/result.json", "peirates/result.json", "trivy/result.json", "kube-bench/result.json"):
+for name in ("host.json", "assess_escape.json", "les/result.json", "cdk/result.json", "deepce/result.json", "amicontained/result.json", "peirates/result.json", "trivy/result.json", "kube-bench/result.json"):
     p = os.path.join(d, name)
     if not os.path.isfile(p): continue
     data = json.loads(open(p).read())
