@@ -228,3 +228,12 @@ id = "kubeconfig-token"
 description = "kubeconfig embedded token / client-certificate-data"
 regex = '''(?im)^\s*(token|client-certificate-data|client-key-data)\s*:\s*[A-Za-z0-9+/=._-]{40,}'''
 keywords = ["token:", "client-certificate-data", "client-key-data"]
+
+# ---------- CLI password arguments ----------
+
+[[rules]]
+id = "cli-password-arg"
+description = "Password passed as CLI argument (-p, --password, --pass, -password)"
+regex = '''(?:^|[\s=])(?:-[-]?p(?:assword)?|--pass(?:word)?)\s+['"]?[^\s'"]{6,}['"]?'''
+entropy = 3.0
+keywords = ["-p", "--password", "--pass", "-password"]
